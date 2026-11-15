@@ -11,12 +11,12 @@
  * | Story | Behavior |
  * |-------|----------|
  * | MS06 | Temperature and humidity of the container (DHT) |
- * | MS07 | Luminosity of the container (BH1750) |
+ * | MS07 | Luminosity of the container (BH1750), the moving average of its last 10 samples |
  * | MS08 | OLED with the data, the lock, the action and the link with the Edge |
  * | MS09 | RFID tag of the person who opens the container (RC522) |
  * | MS10 | Ventilation and simulated cooling with the rules of the profile, with hysteresis |
  * | MS11 | Lock opened for 10 seconds for an authorized tag |
- * | MS12 | Climate sent when a state changes and every minute; every tag read is sent |
+ * | MS12 | Climate sent when a state changes and every 30 seconds; every tag read is sent |
  * | MS13 | Every action sent with its cause and its result |
  * | MS14 | Sign-in with the identifier and the API key of the node |
  * | MS15 | Container profile read from the Edge every five minutes and applied |
@@ -26,8 +26,10 @@
  * The sketch takes from the framework the `DigitalLightIntensitySensor`, `RfidSensor`, `ServoMotor`, `RelayActuator`,
  * `RgbLed`, `Buzzer`, `WiFiConnectivityDriver`, `TimeSynchronizationDriver` and `HttpGatewayClient`, and writes what
  * the framework asks an application to write: the telemetry packages of the Edge and the device that reacts to the
- * events. The `DhtSensor` and the `OledDisplay` of the framework v1.0.0 do not work (see the README), so the DHT22 is
- * read by `ClimateSensor` and the OLED is drawn by `ContainerDisplay`, two files of this sketch.
+ * events. Two classes of the framework v1.0.0 do not work and cannot be fixed by a subclass (see the README): the
+ * `DhtSensor` never reads the DHT22 in Wokwi and the `OledDisplay` draws only the top 16 rows. So the sketch also
+ * writes `ClimateSensor`, a `Sensor` of the framework for the DHT, and `OledScreen`, an `Actuator` of the framework
+ * for the OLED, and nothing else.
  *
  * Requirements: ESP32 core 3.x and the library Modest-IoT-Nano-Framework 1.0.0 (Arduino Library Manager, with
  * ArduinoJson and MQTT). Copy secrets.example.h as secrets.h with the values of the node.
@@ -41,7 +43,7 @@
  * | DHT22 data | GPIO 15 |
  * | SG90 servo signal | GPIO 13 |
  * | 2N2222 base of the fan (1 kΩ) | GPIO 12 |
- * | RGB LED red / green / blue (220 Ω each, common cathode) | GPIO 4 / 16 / 17 |
+ * | RGB LED red / green / blue (200 Ω each, common cathode) | GPIO 4 / 16 / 17 |
  * | Buzzer | GPIO 25 |
  */
 #include <ModestIoT.h>
@@ -52,12 +54,10 @@
 #include <cctype>
 #include <cmath>
 #include <cstring>
-#include <initializer_list>
 #include <ctime>
+#include <initializer_list>
 #include <memory>
 #include <strings.h>
-#include "ClimateSensor.h"
-#include "ContainerDisplay.h"
 
 #if __has_include("secrets.h")
 #include "secrets.h"
@@ -303,6 +303,229 @@ private:
 };
 
 /**
+ * @brief DHT11 or DHT22 of the container (MS06), a `Sensor` of the framework in place of its `DhtSensor`.
+ *
+ * The `DhtSensor` of the framework v1.0.0 drives the line high and switches the pin mode while the sensor already
+ * answers, and allows 120 µs for the two phases of the answer, so in Wokwi it never reads the DHT22: every attempt
+ * fails and the sensor goes to fault. Its reading methods are private and not virtual, so a subclass cannot fix it.
+ * This sensor keeps the line in open-drain mode with its pull-up, gives each level of the protocol its own time limit,
+ * reads the 5 ms frame in a critical section, and keeps the sign of negative DHT22 temperatures. It raises
+ * `DATA_READ` when a value changes, and the fault and recovery events of `Sensor`.
+ */
+class ClimateSensor : public Sensor {
+public:
+    static constexpr uint8_t MODEL_DHT11 = 11; ///< Whole values, 1 s between reads.
+    static constexpr uint8_t MODEL_DHT22 = 22; ///< Tenths, 2 s between reads.
+
+    ClimateSensor(int signalGpioPin, uint8_t model, EventHandler* parentHandler)
+        : Sensor(signalGpioPin, parentHandler), model(model) {
+        pinMode(pin, OUTPUT_OPEN_DRAIN | PULLUP); // Writing HIGH releases the line, so the mode never changes.
+        digitalWrite(pin, HIGH);
+    }
+
+    /** @return The last temperature in °C, or NaN before the first reading. */
+    float getTemperatureInCelsius() const { return temperature; }
+
+    /** @return The last relative humidity in %, or NaN before the first reading. */
+    float getRelativeHumidityInPercentage() const { return humidity; }
+
+protected:
+    void processEvent(Event& event) override {
+        if (event.identifier != MEASURE_DATA_REQUESTED_EVENT_IDENTIFIER) return;
+        uint8_t data[5] = {};
+        if (!readFrame(data) || static_cast<uint8_t>(data[0] + data[1] + data[2] + data[3]) != data[4]) {
+            reportReadFailure(event);
+            if (event.identifier != SENSOR_FAULT_EVENT_IDENTIFIER) event.identifier = SUPPRESSED;
+            return;
+        }
+        float newHumidity, newTemperature;
+        if (model == MODEL_DHT11) {
+            newHumidity = data[0] + data[1] * 0.1f;
+            newTemperature = data[2] + (data[3] & 0x0F) * 0.1f;
+            if (data[3] & 0x80) newTemperature = -newTemperature;
+        } else {
+            newHumidity = static_cast<float>((data[0] << 8) | data[1]) / 10.0f;
+            newTemperature = static_cast<float>(((data[2] & 0x7F) << 8) | data[3]) / 10.0f;
+            if (data[2] & 0x80) newTemperature = -newTemperature;
+        }
+        reportReadSuccess(event);
+        const bool changed = newTemperature != temperature || newHumidity != humidity;
+        temperature = newTemperature;
+        humidity = newHumidity;
+        if (event.identifier == SENSOR_RECOVERED_EVENT_IDENTIFIER) return; // The recovery is propagated.
+        event = changed ? Event(DATA_READ_EVENT_IDENTIFIER, pin) : Event(SUPPRESSED);
+    }
+
+    uint32_t getDefaultSamplingIntervalInMilliseconds() const override { return 2000; }
+
+    uint32_t getMinimalSamplingIntervalInMilliseconds() const override { return model == MODEL_DHT11 ? 1000 : 2000; }
+
+private:
+    static constexpr int SUPPRESSED = -1; // Sensor::on() does not propagate this identifier.
+    static constexpr uint32_t ANSWER_TIMEOUT_IN_MICROSECONDS = 250; // About 80 µs low and 80 µs high.
+    static constexpr uint32_t BIT_TIMEOUT_IN_MICROSECONDS = 120;    // 50 µs low, then 26-28 µs (0) or 70 µs (1) high.
+    static constexpr uint32_t BIT_ONE_MINIMUM_HIGH_IN_MICROSECONDS = 45;
+
+    uint8_t model;
+    float temperature = NAN, humidity = NAN;
+    portMUX_TYPE timingLock = portMUX_INITIALIZER_UNLOCKED;
+
+    bool waitForLevel(int level, uint32_t timeoutInMicroseconds, uint32_t& elapsedInMicroseconds) const {
+        const uint32_t startedAt = micros();
+        while (digitalRead(pin) != level) {
+            if (micros() - startedAt > timeoutInMicroseconds) return false;
+        }
+        elapsedInMicroseconds = micros() - startedAt;
+        return true;
+    }
+
+    bool readFrame(uint8_t* data) {
+        digitalWrite(pin, LOW); // Start signal: at least 18 ms for the DHT11 and 1 ms for the DHT22.
+        delayMicroseconds(model == MODEL_DHT11 ? 20000 : 1100);
+        bool complete = false;
+        uint32_t elapsed = 0;
+        portENTER_CRITICAL(&timingLock);
+        digitalWrite(pin, HIGH);
+        // Answer of the sensor: low, high, then the low that starts the first bit.
+        if (waitForLevel(LOW, ANSWER_TIMEOUT_IN_MICROSECONDS, elapsed)
+            && waitForLevel(HIGH, ANSWER_TIMEOUT_IN_MICROSECONDS, elapsed)
+            && waitForLevel(LOW, ANSWER_TIMEOUT_IN_MICROSECONDS, elapsed)) {
+            complete = true;
+            for (uint8_t bit = 0; bit < 40 && complete; ++bit) {
+                uint32_t highTime = 0;
+                complete = waitForLevel(HIGH, BIT_TIMEOUT_IN_MICROSECONDS, elapsed)
+                           && waitForLevel(LOW, BIT_TIMEOUT_IN_MICROSECONDS, highTime);
+                data[bit / 8] = static_cast<uint8_t>(data[bit / 8] << 1 | (highTime >= BIT_ONE_MINIMUM_HIGH_IN_MICROSECONDS));
+            }
+        }
+        portEXIT_CRITICAL(&timingLock);
+        digitalWrite(pin, HIGH);
+        return complete;
+    }
+};
+
+/// 5x7 font of the `OledDisplay` of the framework (ASCII 0x20-0x7E), one byte per column with the top row in bit 0.
+static constexpr uint8_t FONT[][5] = {
+    {0x00,0x00,0x00,0x00,0x00},{0x00,0x00,0x5F,0x00,0x00},{0x00,0x07,0x00,0x07,0x00},{0x14,0x7F,0x14,0x7F,0x14},
+    {0x24,0x2A,0x7F,0x2A,0x12},{0x23,0x13,0x08,0x64,0x62},{0x36,0x49,0x55,0x22,0x50},{0x00,0x05,0x03,0x00,0x00},
+    {0x00,0x1C,0x22,0x41,0x00},{0x00,0x41,0x22,0x1C,0x00},{0x14,0x08,0x3E,0x08,0x14},{0x08,0x08,0x3E,0x08,0x08},
+    {0x00,0x50,0x30,0x00,0x00},{0x08,0x08,0x08,0x08,0x08},{0x00,0x60,0x60,0x00,0x00},{0x20,0x10,0x08,0x04,0x02},
+    {0x3E,0x51,0x49,0x45,0x3E},{0x00,0x42,0x7F,0x40,0x00},{0x42,0x61,0x51,0x49,0x46},{0x21,0x41,0x45,0x4B,0x31},
+    {0x18,0x14,0x12,0x7F,0x10},{0x27,0x45,0x45,0x45,0x39},{0x3C,0x4A,0x49,0x49,0x30},{0x01,0x71,0x09,0x05,0x03},
+    {0x36,0x49,0x49,0x49,0x36},{0x06,0x49,0x49,0x29,0x1E},{0x00,0x36,0x36,0x00,0x00},{0x00,0x56,0x36,0x00,0x00},
+    {0x08,0x14,0x22,0x41,0x00},{0x14,0x14,0x14,0x14,0x14},{0x00,0x41,0x22,0x14,0x08},{0x02,0x01,0x51,0x09,0x06},
+    {0x32,0x49,0x79,0x41,0x3E},{0x7E,0x11,0x11,0x11,0x7E},{0x7F,0x49,0x49,0x49,0x36},{0x3E,0x41,0x41,0x41,0x22},
+    {0x7F,0x41,0x41,0x22,0x1C},{0x7F,0x49,0x49,0x49,0x41},{0x7F,0x09,0x09,0x09,0x01},{0x3E,0x41,0x49,0x49,0x7A},
+    {0x7F,0x08,0x08,0x08,0x7F},{0x00,0x41,0x7F,0x41,0x00},{0x20,0x40,0x41,0x3F,0x01},{0x7F,0x08,0x14,0x22,0x41},
+    {0x7F,0x40,0x40,0x40,0x40},{0x7F,0x02,0x0C,0x02,0x7F},{0x7F,0x04,0x08,0x10,0x7F},{0x3E,0x41,0x41,0x41,0x3E},
+    {0x7F,0x09,0x09,0x09,0x06},{0x3E,0x41,0x51,0x21,0x5E},{0x7F,0x09,0x19,0x29,0x46},{0x46,0x49,0x49,0x49,0x31},
+    {0x01,0x01,0x7F,0x01,0x01},{0x3F,0x40,0x40,0x40,0x3F},{0x1F,0x20,0x40,0x20,0x1F},{0x3F,0x40,0x38,0x40,0x3F},
+    {0x63,0x14,0x08,0x14,0x63},{0x07,0x08,0x70,0x08,0x07},{0x61,0x51,0x49,0x45,0x43},{0x00,0x7F,0x41,0x41,0x00},
+    {0x02,0x04,0x08,0x10,0x20},{0x00,0x41,0x41,0x7F,0x00},{0x04,0x02,0x01,0x02,0x04},{0x40,0x40,0x40,0x40,0x40},
+    {0x00,0x01,0x02,0x04,0x00},{0x20,0x54,0x54,0x54,0x78},{0x7F,0x48,0x44,0x44,0x38},{0x38,0x44,0x44,0x44,0x20},
+    {0x38,0x44,0x44,0x48,0x7F},{0x38,0x54,0x54,0x54,0x18},{0x08,0x7E,0x09,0x01,0x02},{0x18,0xA4,0xA4,0xA4,0x7C},
+    {0x7F,0x08,0x04,0x04,0x78},{0x00,0x44,0x7D,0x40,0x00},{0x20,0x40,0x44,0x3D,0x00},{0x7F,0x10,0x28,0x44,0x00},
+    {0x00,0x41,0x7F,0x40,0x00},{0x7C,0x04,0x18,0x04,0x78},{0x7C,0x08,0x04,0x04,0x78},{0x38,0x44,0x44,0x44,0x38},
+    {0xFC,0x24,0x24,0x24,0x18},{0x18,0x24,0x24,0x18,0xFC},{0x7C,0x08,0x04,0x04,0x08},{0x48,0x54,0x54,0x54,0x20},
+    {0x04,0x3F,0x44,0x40,0x20},{0x3C,0x40,0x40,0x20,0x7C},{0x1C,0x20,0x40,0x20,0x1C},{0x3C,0x40,0x30,0x40,0x3C},
+    {0x44,0x28,0x10,0x28,0x44},{0x0C,0x50,0x50,0x50,0x3C},{0x44,0x64,0x54,0x4C,0x44},{0x00,0x08,0x36,0x41,0x00},
+    {0x00,0x00,0x7F,0x00,0x00},{0x00,0x41,0x36,0x08,0x00},{0x10,0x08,0x08,0x10,0x08}
+};
+
+/**
+ * @brief 128x64 SSD1306 of the container (MS08), an `Actuator` of the framework in place of its `OledDisplay`.
+ *
+ * The `OledDisplay` of the framework v1.0.0 keeps the index of its frame buffer in a `uint8_t` (`page * 128 + x`), so
+ * from the third page on every pixel wraps to the first two and only the top 16 rows can be drawn; its `Ssd1306Driver`
+ * also writes each page in 129 bytes, one more than the I2C buffer of the ESP32. Both are private, so a subclass cannot
+ * fix them. This screen keeps the drawing calls and the update command of `OledDisplay`, draws in its own frame buffer
+ * with the same font, and sends the setup in one transaction and the frame in 16-byte transactions.
+ */
+class OledScreen : public Actuator {
+public:
+    static constexpr uint8_t WIDTH = 128, HEIGHT = 64, CHARACTER_WIDTH = 6;
+
+    explicit OledScreen(uint8_t i2cAddress, CommandHandler* parentHandler = nullptr)
+        : Actuator(i2cAddress, parentHandler) {}
+
+    /** @return False when no OLED answers at the address (the I2C bus must be started). */
+    bool initialize() {
+        static constexpr uint8_t SETUP[] = {
+            0x00,                   // Command stream
+            0xAE,                   // Display off
+            0xD5, 0x80, 0xA8, 0x3F, // Clock divide ratio; multiplex ratio of 64 rows
+            0xD3, 0x00, 0x40,       // No display offset; start line 0
+            0x8D, 0x14, 0x20, 0x00, // Charge pump on; horizontal addressing
+            0xA1, 0xC8, 0xDA, 0x12, // Segment remap, COM scan from the last row, COM pins of a 128x64 panel
+            0x81, 0x7F, 0xD9, 0xF1, // Contrast; pre-charge period
+            0xDB, 0x40, 0xA4, 0xA6, // VCOMH level; show the RAM; not inverted
+            0x2E, 0xAF              // No scroll; display on
+        };
+        Wire.beginTransmission(static_cast<uint8_t>(pin));
+        Wire.write(SETUP, sizeof(SETUP));
+        if (Wire.endTransmission() != 0) return false;
+        clearFrameBuffer();
+        sendFrame();
+        return true;
+    }
+
+    void clearFrameBuffer() { memset(frame, 0, sizeof(frame)); }
+
+    /** @brief Draws text with 6 px per character; what does not fit in the width is cut. */
+    void setText(const char* text, uint8_t x, uint8_t y) {
+        for (; *text != '\0' && x + CHARACTER_WIDTH <= WIDTH + 1; ++text, x += CHARACTER_WIDTH) {
+            const uint8_t character = static_cast<uint8_t>(*text);
+            if (character < 0x20 || character > 0x7E) continue;
+            for (uint8_t column = 0; column < 5; ++column) {
+                for (uint8_t row = 0; row < 8; ++row) {
+                    if (FONT[character - 0x20][column] & (1 << row)) setPixel(x + column, y + row);
+                }
+            }
+        }
+    }
+
+    void drawHorizontalLine(uint8_t x, uint8_t y, uint8_t length) {
+        for (uint8_t offset = 0; offset < length; ++offset) setPixel(x + offset, y);
+    }
+
+    void drawRectangle(uint8_t x, uint8_t y, uint8_t width, uint8_t height) {
+        drawHorizontalLine(x, y, width);
+        drawHorizontalLine(x, y + height - 1, width);
+        for (uint8_t offset = 0; offset < height; ++offset) {
+            setPixel(x, y + offset);
+            setPixel(x + width - 1, y + offset);
+        }
+    }
+
+protected:
+    void executeCommand(Command command) override {
+        if (command == OledDisplay::UPDATE_DISPLAY_COMMAND) sendFrame();
+    }
+
+private:
+    static constexpr size_t DATA_CHUNK_SIZE = 16; // Bytes per I2C transaction, inside the 128-byte Wire buffer.
+    uint8_t frame[WIDTH * HEIGHT / 8]{};
+
+    void setPixel(uint8_t x, uint8_t y) {
+        if (x < WIDTH && y < HEIGHT) frame[(y / 8) * WIDTH + x] |= static_cast<uint8_t>(1 << (y % 8));
+    }
+
+    void sendFrame() const {
+        // The whole screen as the drawing window, then the frame in small data transactions.
+        static constexpr uint8_t WINDOW[] = {0x00, 0x21, 0x00, WIDTH - 1, 0x22, 0x00, HEIGHT / 8 - 1};
+        Wire.beginTransmission(static_cast<uint8_t>(pin));
+        Wire.write(WINDOW, sizeof(WINDOW));
+        Wire.endTransmission();
+        for (size_t offset = 0; offset < sizeof(frame); offset += DATA_CHUNK_SIZE) {
+            Wire.beginTransmission(static_cast<uint8_t>(pin));
+            Wire.write(0x40);
+            Wire.write(frame + offset, DATA_CHUNK_SIZE);
+            Wire.endTransmission();
+        }
+    }
+};
+
+/**
  * @brief Container Monitor: reacts on the sampler task to its sensors and tags, and talks to the Edge on the network
  * task. The local reaction does not depend on the network: with no Edge, it keeps the default profile.
  */
@@ -310,7 +533,7 @@ class ContainerMonitor : public Device {
 public:
     ContainerMonitor(WiFiConnectivityDriver& wifiDriver, HttpGatewayClient& edgeGateway)
         : Device(SAMPLER_TICK_IN_MILLISECONDS),
-          climateSensor(CLIMATE_SENSOR_PIN, ClimateSensor::MODEL_DHT22, this),
+          climateSensor(CLIMATE_SENSOR_PIN, CLIMATE_SENSOR_MODEL, this),
           lightSensor(LIGHT_SENSOR_IDENTIFIER, DigitalLightIntensitySensor::DEFAULT_I2C_ADDRESS,
                       DigitalLightIntensitySensor::DEFAULT_LIGHT_DETECTED_THRESHOLD_IN_LUX, this),
           tagReader(TAG_READER_SELECT_PIN, TAG_READER_RESET_PIN, this),
@@ -318,6 +541,7 @@ public:
           fan(FAN_PIN, false, this),
           statusLed(LED_RED_PIN, LED_GREEN_PIN, LED_BLUE_PIN, false, this),
           alarmBuzzer(BUZZER_PIN, this),
+          screen(SCREEN_I2C_ADDRESS, this),
           wifi(wifiDriver),
           edge(edgeGateway),
           profile(Profile::defaults())
@@ -327,7 +551,7 @@ public:
         snprintf(actuationEventsUrl, sizeof(actuationEventsUrl), "%s%s", EDGE_BASE_URL, ACTUATION_EVENTS_ROUTE);
         snprintf(configurationUrl, sizeof(configurationUrl), "%s%s%s", EDGE_BASE_URL, CONFIGURATION_ROUTE, DEVICE_ID);
 
-        if (!display.initialize()) Serial.println("[ContainerMonitor] OLED not found at 0x3C");
+        if (!screen.initialize()) Serial.println("[ContainerMonitor] OLED not found at 0x3C");
         climateSensor.setFaultThreshold(SENSOR_FAULT_THRESHOLD);
         lightSensor.setFaultThreshold(SENSOR_FAULT_THRESHOLD);
         animateLed(millis());
@@ -343,7 +567,7 @@ public:
         }
         appendSensorToScheduler(this, EVALUATE_EVENT, 1000);    // Classify, act and draw every second.
         appendSensorToScheduler(this, ANIMATE_EVENT, 100);      // LED patterns, serial tags and end of the opening.
-        appendSensorToScheduler(this, REPORT_EVENT, 60000);     // Send the climate every minute.
+        appendSensorToScheduler(this, REPORT_EVENT, 30000);     // Send the climate every 30 seconds (report 5.6).
         appendSensorToScheduler(this, ALARM_REPEAT_EVENT, 2000); // Beep every two seconds while CRITICAL.
 
         EngineConfiguration engine;
@@ -359,7 +583,10 @@ public:
     /** @runs_on{sampler} */
     void on(Event event) override {
         switch (event.identifier) {
-            case EVALUATE_EVENT: evaluate(false); break;
+            case EVALUATE_EVENT:
+                values[2] = averageLight(lightSensor.hasValidSample() && !faulted[2] ? lightSensor.getIlluminanceInLux() : NAN);
+                evaluate(false);
+                break;
             case ANIMATE_EVENT: animate(); break;
             case REPORT_EVENT: sendClimate(); break;
             case ALARM_REPEAT_EVENT:
@@ -451,6 +678,11 @@ private:
     static constexpr int EVALUATE_EVENT = 1000, ANIMATE_EVENT = 1001, REPORT_EVENT = 1002, ALARM_REPEAT_EVENT = 1003;
     static constexpr int BEGIN_PROFILE = 2000, SET_LIMIT = 2001, ADD_RULE = 2013, APPLY_PROFILE = 2014;
     static constexpr int32_t NO_LIMIT = INT32_MIN;
+    static constexpr uint8_t CLIMATE_SENSOR_MODEL = ClimateSensor::MODEL_DHT22; // MODEL_DHT11 for a DHT11.
+    static constexpr uint8_t SCREEN_I2C_ADDRESS = 0x3C;
+    static constexpr size_t LIGHT_AVERAGE_WINDOW = 10; // Light samples in the moving average (report 5.6).
+    static constexpr size_t SCREEN_LINE_COUNT = 6, SCREEN_LINE_SIZE = 22; // 21 characters of 6 px, and the terminator.
+    static constexpr unsigned long ACCESS_MESSAGE_DURATION = 3000;    // Access result on the screen.
 
     enum class LedPattern { Normal, Warning, Critical, NeedsReview, Linking };
 
@@ -461,7 +693,7 @@ private:
     RelayActuator fan;
     RgbLed statusLed;
     Buzzer alarmBuzzer;
-    ContainerDisplay display;
+    OledScreen screen;
     WiFiConnectivityDriver& wifi;
     HttpGatewayClient& edge;
     char signInUrl[128]{}, readingsUrl[128]{}, actuationEventsUrl[128]{}, configurationUrl[160]{};
@@ -478,12 +710,17 @@ private:
     Metric actionCause[ACTION_COUNT] = {Metric::Temperature, Metric::Temperature, Metric::Temperature};
     bool lockOpen = false, openedByTag = false, alarmAcknowledged = false;
     unsigned long openedByTagAt = 0;
-    bool accessFeedback = false, accessGranted = false;
+    bool accessFeedback = false, accessOnScreen = false, accessGranted = false;
     unsigned long accessFeedbackAt = 0;
+    char accessTag[SCREEN_LINE_SIZE]{};
     bool ledDrawn = false, ledLit = false;
     RgbColor ledColor{0, 0, 0};
     char serialTag[32]{};
     size_t serialTagLength = 0;
+    float lightSamples[LIGHT_AVERAGE_WINDOW]{};
+    size_t lightSampleCount = 0, nextLightSample = 0;
+    char screenLines[SCREEN_LINE_COUNT][SCREEN_LINE_SIZE]{}, shownLines[SCREEN_LINE_COUNT][SCREEN_LINE_SIZE]{};
+    bool screenDrawn = false, accessDrawn = false;
 
     // Network task state (its hooks are const in the framework); the sampler reads the atomics.
     mutable std::atomic<bool> signedIn{false};
@@ -497,11 +734,28 @@ private:
         return true;
     }
 
-    /** @brief Reads the sensors, classifies each metric, applies the rules and draws the screen. */
+    /**
+     * @brief Moving average of the last 10 light samples, one per second, against the noise of the BH1750 (report 5.6).
+     * @param lux The latest sample, or NaN without one (the average starts again).
+     */
+    float averageLight(float lux) {
+        if (std::isnan(lux)) {
+            lightSampleCount = nextLightSample = 0;
+            return NAN;
+        }
+        lightSamples[nextLightSample] = lux;
+        nextLightSample = (nextLightSample + 1) % LIGHT_AVERAGE_WINDOW;
+        if (lightSampleCount < LIGHT_AVERAGE_WINDOW) lightSampleCount++;
+        float sum = 0;
+        for (size_t i = 0; i < lightSampleCount; i++) sum += lightSamples[i];
+        return sum / lightSampleCount;
+    }
+
+    /** @brief Classifies each metric with the latest readings, applies the rules and draws the screen. */
     void evaluate(bool profileChanged) {
         values[0] = climateSensor.getTemperatureInCelsius(); // NaN until the first reading.
         values[1] = climateSensor.getRelativeHumidityInPercentage();
-        values[2] = lightSensor.hasValidSample() ? lightSensor.getIlluminanceInLux() : NAN;
+        // values[2] is the light average, updated once per second by EVALUATE_EVENT.
 
         const State previousOverall = overall;
         bool changed = false;
@@ -598,9 +852,9 @@ private:
                                                               profile.version));
         }
 
-        display.showAccess(granted, tag, now);
-        accessFeedback = true;
+        accessFeedback = accessOnScreen = true;
         accessGranted = granted;
+        snprintf(accessTag, sizeof(accessTag), "%s", tag);
         accessFeedbackAt = now;
         if (granted) {
             if (overall == State::Critical && !alarmAcknowledged) {
@@ -664,25 +918,63 @@ private:
     bool needsReview() const { return faulted[0] || faulted[1] || faulted[2] || edgeSilent(); }
 
     const char* linkLabel() const {
-        if (edgeSilent()) return "NO EDGE";
+        if (edgeSilent()) return "OFFLINE";
         return signedIn ? "ONLINE" : "LINKING";
     }
 
+    /**
+     * @brief Screen of the style guide (MS08, US71): the container and its state; temperature, humidity and light,
+     * each with its state; the action and the lock; the link with the Edge. A tag shows its result for 3 seconds.
+     * The OLED is written only when a line changes.
+     */
     void refreshScreen(unsigned long now) {
-        const bool ventilation = actionOn[static_cast<int>(Action::Ventilation)];
-        const bool cooling = actionOn[static_cast<int>(Action::Cooling)];
-        ContainerSnapshot snapshot{};
-        snapshot.deviceId = DEVICE_ID;
-        snapshot.overallState = Names::of(overall);
-        MetricLine* lines[] = {&snapshot.temperature, &snapshot.humidity, &snapshot.luminosity};
-        for (size_t i = 0; i < METRIC_COUNT; i++) {
-            *lines[i] = {faulted[i] ? NAN : values[i], faulted[i] ? "FAULT" : Names::of(states[i])};
+        if (accessOnScreen && now - accessFeedbackAt >= ACCESS_MESSAGE_DURATION) accessOnScreen = false;
+        if (accessOnScreen) {
+            const char* access[] = {"", "ACCESS", accessGranted ? "GRANTED" : "DENIED", accessTag,
+                                    accessGranted ? "OPENING..." : "STAYS LOCKED", ""};
+            for (size_t line = 0; line < SCREEN_LINE_COUNT; line++) {
+                snprintf(screenLines[line], SCREEN_LINE_SIZE, "%s", access[line]);
+            }
+        } else {
+            const bool ventilation = actionOn[static_cast<int>(Action::Ventilation)];
+            const bool cooling = actionOn[static_cast<int>(Action::Cooling)];
+            snprintf(screenLines[0], SCREEN_LINE_SIZE, "%-13.13s%8s", DEVICE_ID, Names::of(overall));
+            static const char* const LABELS[] = {"TEMP", "HUM ", "LUX "};
+            static const char* const FORMATS[] = {"%5.1fC", "%5.1f%%", "%4.0flx"};
+            for (size_t i = 0; i < METRIC_COUNT; i++) {
+                char value[10];
+                if (faulted[i] || std::isnan(values[i])) snprintf(value, sizeof(value), "%6s", "--");
+                else snprintf(value, sizeof(value), FORMATS[i], values[i]);
+                snprintf(screenLines[i + 1], SCREEN_LINE_SIZE, "%s %-7s%8s", LABELS[i], value,
+                         faulted[i] ? "FAULT" : Names::of(states[i]));
+            }
+            snprintf(screenLines[4], SCREEN_LINE_SIZE, "%s - %s",
+                     ventilation && cooling ? "VENT+COOL" : ventilation ? "VENTILATION" : cooling ? "COOLING" : "AUTO",
+                     lockOpen ? "OPEN" : "LOCKED");
+            snprintf(screenLines[5], SCREEN_LINE_SIZE, "%-11s%10s", linkLabel(), alarmAcknowledged ? "ALARM ACK" : "");
         }
-        snapshot.action = ventilation && cooling ? "VENT+COOL" : ventilation ? "VENTILATION" : cooling ? "COOLING" : "AUTO";
-        snapshot.locked = !lockOpen;
-        snapshot.link = linkLabel();
-        snapshot.alarmAcknowledged = alarmAcknowledged;
-        display.refresh(snapshot, now);
+        if (screenDrawn && accessDrawn == accessOnScreen && memcmp(screenLines, shownLines, sizeof(shownLines)) == 0) {
+            return; // Same screen: no I2C traffic.
+        }
+        screenDrawn = true;
+        accessDrawn = accessOnScreen;
+        memcpy(shownLines, screenLines, sizeof(shownLines));
+
+        screen.clearFrameBuffer();
+        if (accessOnScreen) { // Framed message, lines centered.
+            screen.drawRectangle(0, 0, OledScreen::WIDTH, OledScreen::HEIGHT);
+            for (size_t line = 1; line < SCREEN_LINE_COUNT - 1; line++) {
+                const size_t width = strlen(screenLines[line]) * OledScreen::CHARACTER_WIDTH;
+                const uint8_t x = width < OledScreen::WIDTH ? static_cast<uint8_t>((OledScreen::WIDTH - width) / 2) : 0;
+                screen.setText(screenLines[line], x, static_cast<uint8_t>(8 + (line - 1) * 12));
+            }
+        } else { // Data lines, with separators under the header and above the action.
+            static constexpr uint8_t LINE_Y[] = {0, 13, 23, 33, 45, 55};
+            for (size_t line = 0; line < SCREEN_LINE_COUNT; line++) screen.setText(screenLines[line], 0, LINE_Y[line]);
+            screen.drawHorizontalLine(0, 10, OledScreen::WIDTH);
+            screen.drawHorizontalLine(0, 42, OledScreen::WIDTH);
+        }
+        screen.handle(OledDisplay::UPDATE_DISPLAY_COMMAND);
     }
 
     /**
