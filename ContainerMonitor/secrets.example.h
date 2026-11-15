@@ -14,7 +14,6 @@
 #ifndef CONTAINER_MONITOR_SECRETS_H
 #define CONTAINER_MONITOR_SECRETS_H
 
-#include "ClimateSensor.h"
 
 /// Wi-Fi network of the local station ("Wokwi-GUEST" in the simulator).
 static constexpr const char* WIFI_SSID = "Wokwi-GUEST";
@@ -39,10 +38,7 @@ static constexpr const char* AUTHORIZED_TAGS[] = {
     "A1:B2:C3:D4"
 };
 
-/// DHT model of the board: DHT11 in the container, DHT22 in Wokwi (the simulator has no DHT11).
-static constexpr uint8_t CLIMATE_SENSOR_MODEL = ClimateSensor::MODEL_DHT22;
-
-/// Also read tags typed on the serial monitor (one UID per line): Wokwi has no RC522.
+/// Also read tags typed on the serial monitor (one UID per line): the Wokwi circuit has no RC522.
 static constexpr bool SERIAL_TAG_INPUT = true;
 
 #endif // CONTAINER_MONITOR_SECRETS_H

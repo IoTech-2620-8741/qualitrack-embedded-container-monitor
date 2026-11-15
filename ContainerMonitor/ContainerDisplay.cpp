@@ -114,34 +114,23 @@ void ContainerDisplay::refresh(const ContainerSnapshot& snapshot, const unsigned
 }
 
 void ContainerDisplay::composeData(const ContainerSnapshot& snapshot) {
-    snprintf(lines[0], LINE_SIZE, "%-13.13s%8s", snapshot.deviceId, stateLabelOf(snapshot.overallState));
-    composeMetric(1, "TEMP", "%5.1fC", snapshot, ContainerMetric::Temperature);
-    composeMetric(2, "HUM ", "%5.1f%%", snapshot, ContainerMetric::Humidity);
-    composeMetric(3, "LUX ", "%4.0flx", snapshot, ContainerMetric::Luminosity);
-
-    const char* action = "AUTO";
-    if (snapshot.ventilationOn && snapshot.coolingOn) action = "VENT+COOL";
-    else if (snapshot.ventilationOn) action = "VENTILATION";
-    else if (snapshot.coolingOn) action = "COOLING";
-    snprintf(lines[4], LINE_SIZE, "%s - %s", action, snapshot.locked ? "LOCKED" : "OPEN");
-
-    const char* link = "LINKING";
-    if (snapshot.link == EdgeLink::Online) link = "ONLINE";
-    else if (snapshot.link == EdgeLink::Offline) link = "NO EDGE";
-    snprintf(lines[5], LINE_SIZE, "%-11s%10s", link, snapshot.alarmAcknowledged ? "ALARM ACK" : "");
+    snprintf(lines[0], LINE_SIZE, "%-13.13s%8s", snapshot.deviceId, snapshot.overallState);
+    composeMetric(1, "TEMP", "%5.1fC", snapshot.temperature);
+    composeMetric(2, "HUM ", "%5.1f%%", snapshot.humidity);
+    composeMetric(3, "LUX ", "%4.0flx", snapshot.luminosity);
+    snprintf(lines[4], LINE_SIZE, "%s - %s", snapshot.action, snapshot.locked ? "LOCKED" : "OPEN");
+    snprintf(lines[5], LINE_SIZE, "%-11s%10s", snapshot.link, snapshot.alarmAcknowledged ? "ALARM ACK" : "");
 }
 
 void ContainerDisplay::composeMetric(const size_t line, const char* label, const char* format,
-                                     const ContainerSnapshot& snapshot, const ContainerMetric metric) {
-    const size_t index = static_cast<size_t>(metric);
+                                     const MetricLine& metric) {
     char value[10];
-    if (snapshot.faulted[index] || std::isnan(snapshot.values[index])) {
+    if (std::isnan(metric.value)) {
         snprintf(value, sizeof(value), "%6s", "--");
     } else {
-        snprintf(value, sizeof(value), format, snapshot.values[index]);
+        snprintf(value, sizeof(value), format, metric.value);
     }
-    const char* state = snapshot.faulted[index] ? "FAULT" : stateLabelOf(snapshot.states[index]);
-    snprintf(lines[line], LINE_SIZE, "%s %-7s%8s", label, value, state);
+    snprintf(lines[line], LINE_SIZE, "%s %-7s%8s", label, value, metric.state);
 }
 
 void ContainerDisplay::composeAccess() {
@@ -217,8 +206,4 @@ void ContainerDisplay::sendFrame() const {
         Wire.write(frame + offset, DATA_CHUNK_SIZE);
         Wire.endTransmission();
     }
-}
-
-const char* ContainerDisplay::stateLabelOf(const EnvironmentalState state) {
-    return ContainerProfile::nameOf(state);
 }

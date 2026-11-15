@@ -22,27 +22,23 @@
 #define CONTAINER_DISPLAY_H
 
 #include <Arduino.h>
-#include "ContainerProfile.h"
-
-/** @brief Link of the node with the Edge, as the screen shows it. */
-enum class EdgeLink : uint8_t {
-    Linking, ///< The Edge has not accepted the node yet.
-    Online,  ///< The Edge accepted the node and answers.
-    Offline  ///< The Edge has not answered for the review timeout.
+/** @brief One metric of the screen: its value (NaN when missing) and its state ("FAULT" when the sensor fails). */
+struct MetricLine {
+    float value;
+    const char* state;
 };
 
-/** @brief Data the screen shows; a NaN value is shown as missing. */
+/** @brief Text the screen shows, already decided by the device. */
 struct ContainerSnapshot {
-    const char* deviceId;
-    float values[CONTAINER_METRIC_COUNT];
-    EnvironmentalState states[CONTAINER_METRIC_COUNT];
-    bool faulted[CONTAINER_METRIC_COUNT];
-    EnvironmentalState overallState;
-    bool locked;
-    bool ventilationOn;
-    bool coolingOn;
-    bool alarmAcknowledged;
-    EdgeLink link;
+    const char* deviceId;     ///< Identifier of the container.
+    const char* overallState; ///< NORMAL, WARNING or CRITICAL.
+    MetricLine temperature;   ///< In °C.
+    MetricLine humidity;      ///< In %.
+    MetricLine luminosity;    ///< In lux.
+    const char* action;       ///< AUTO, VENTILATION, COOLING or VENT+COOL.
+    bool locked;              ///< State of the lock.
+    const char* link;         ///< LINKING, ONLINE or NO EDGE.
+    bool alarmAcknowledged;   ///< The staff acknowledged the CRITICAL alarm.
 };
 
 /**
@@ -99,15 +95,13 @@ private:
 
     void composeData(const ContainerSnapshot& snapshot);
     void composeAccess();
-    void composeMetric(size_t line, const char* label, const char* format, const ContainerSnapshot& snapshot,
-                       ContainerMetric metric);
+    void composeMetric(size_t line, const char* label, const char* format, const MetricLine& metric);
     void draw();
     void setPixel(uint8_t x, uint8_t y);
     void drawText(const char* text, uint8_t x, uint8_t y);
     void drawHorizontalLine(uint8_t x, uint8_t y, uint8_t length);
     void drawRectangle(uint8_t x, uint8_t y, uint8_t width, uint8_t height);
     void sendFrame() const;
-    static const char* stateLabelOf(EnvironmentalState state);
 };
 
 #endif // CONTAINER_DISPLAY_H
