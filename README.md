@@ -86,7 +86,7 @@ Circuit of report section 5.6 (Cirkit Designer). Cabinet of 450 × 450 × 600 mm
 | OLED display SSD1306 0.96" | VDD / SCK / SDA / GND | 3V3 / GPIO 22 / GPIO 21 / GND | Shared I2C bus, address 0x3C |
 | BH1750 light sensor | VCC / SCL / SDA / GND | 3V3 / GPIO 22 / GPIO 21 / GND | ADDR not connected (address 0x23) |
 | RC522 RFID reader | 3.3V / GND / MOSI / MISO / SCK / SDA / RST | 3V3 / GND / GPIO 23 / 19 / 18 / 5 / 2 | SPI bus |
-| DHT11 sensor | VCC / DATA / GND | 5V / GPIO 15 / GND | Temperature and humidity (a DHT22 uses the same wiring) |
+| DHT22 sensor | VCC / DATA / GND | 3V3 / GPIO 15 / GND | Temperature and humidity |
 | SG90 servo | Signal / VCC / GND | GPIO 13 / 5V / GND | Latch of the container |
 | 5 V fan | + / − | 5V / collector of the 2N2222 | Emitter of the 2N2222 to GND |
 | 2N2222 transistor | Base | GPIO 12 (1 kΩ) | Switches the fan |
@@ -94,51 +94,79 @@ Circuit of report section 5.6 (Cirkit Designer). Cabinet of 450 × 450 × 600 mm
 | Buzzer | + / − | GPIO 25 / GND | Alarm and access denied sound |
 
 GPIO 2, 12 and 15 are strapping pins of the ESP32: if the RC522 or the transistor cause problems at boot, move them to
-free pins such as GPIO 14 or 27 (report section 5.6) and change `PINS` in `ContainerMonitor.ino`.
+free pins such as GPIO 14 or 27 (report section 5.6) and change the pin constants at the top of
+`ContainerMonitor.ino`.
 
 ## Firmware
 
+The node is one sketch, as in the examples of the framework, plus two components that replace parts of the
+framework v1.0.0 that do not work (see the notes below):
+
 | File | Role |
 |------|------|
-| `ContainerMonitor.ino` | Pins of the circuit; starts the I2C bus and creates the Wi-Fi driver, the Edge gateway and the device |
-| `ContainerMonitorDevice` | `Device` mediator: owns the sensors and actuators, applies the rules, the lock and the alarm |
-| `ContainerProfile` | Thresholds of each metric, actuation rules and version; classifies like the cloud, with hysteresis |
-| `ContainerProfileTranslator` | Reads the thresholds and rules of the configuration the Edge returns |
-| `ClimateSensor` | `Sensor` of the DHT11 / DHT22 with a time limit per phase of the protocol |
-| `LockServo` | `Actuator` of the SG90 latch with the 0.5–2.4 ms pulses of a servo |
-| `StatusIndicator` | Patterns of the status LED |
-| `ContainerDisplay` | Screen of the OLED, drawn in its own frame buffer and sent to the SSD1306 |
-| `EdgeTelemetryPackage`, `ContainerReadingPackage`, `ActuationEventPackage` | Telemetry packages with the fields of the Edge API (times in UTC) |
-| `EdgeGatewayClient` | `GatewayClient` for the Edge API: `X-API-Key` header, NTP clock, sign-in check, profile refresh and last contact |
-| `NodeLog.h` | Messages of the node on the serial monitor |
+| `ContainerMonitor.ino` | The node: pins, profile, the `ContainerReading` and `ActuationEvent` telemetry packages and the `ContainerMonitor` device |
+| `ClimateSensor` | `Sensor` of the DHT22 with a time limit per phase of the protocol (replaces `DhtSensor`) |
+| `ContainerDisplay` | Screen of the OLED, drawn in its own frame buffer and sent to the SSD1306 (replaces `OledDisplay`) |
 | `secrets.example.h` | Settings of the node, with the authorized tags; copy it as `secrets.h` (ignored by Git) with the real values |
-| `diagram.json`, `libraries.txt` | Circuit and libraries of the Wokwi project |
-| `../wokwi/bh1750.chip.*` | Custom Wokwi chip of the BH1750, which Wokwi does not include (outside the sketch so arduino-cli does not compile it) |
+| `diagram.json`, `libraries.txt` | Circuit and libraries of the Wokwi project (the Arduino IDE ignores them) |
+| `../wokwi/bh1750.chip.*` | Custom Wokwi chip of the BH1750, which Wokwi does not include (outside the sketch so the Arduino builder does not compile it) |
+
+The sketch writes what the framework asks an application to write: the telemetry packages with the fields of the Edge
+and `ContainerMonitor`, a `Device` that reacts to the events of its sensors and tags, applies the rules, drives the
+lock and the alarm, and animates the status LED. The rest comes from the framework: `DigitalLightIntensitySensor`,
+`RfidSensor`, `ServoMotor`, `RelayActuator`, `RgbLed`, `Buzzer`, `WiFiConnectivityDriver`, `TimeSynchronizationDriver` and
+`HttpGatewayClient`. The profile read from the Edge on the network task reaches the sampler task through
+`enqueueCommand()`: one command starts it, one carries each limit or rule, and the last one applies it.
 
 The node classifies a reading with the rule of the cloud: a value beyond a critical limit is CRITICAL, beyond a normal
 limit WARNING, and NORMAL otherwise. It sends the climate every minute and at once when the state of a metric
 changes, each tag it reads, and each action it executes, but only once its clock is synchronized with NTP, because
 the Edge needs the time of each observation.
 
-Notes on the framework v1.0.0:
+Notes on the framework v1.0.0 (its `main` branch has the same sources). The faults of the `DhtSensor` and the
+`OledDisplay` are in private, non-virtual methods, so a subclass cannot fix them:
 
-- The `DhtSensor` measures the whole answer of the sensor against one 120 µs limit and changes the pin mode in the
-  middle of it, so it misses the answer (in Wokwi it always reported a fault). `ClimateSensor` extends `Sensor` with
-  the pin in open-drain mode and a limit per phase.
-- The `ServoMotor` turns the angle into a share of the whole 20 ms period (90° gives a 10 ms pulse), so a servo does not
-  move. `LockServo` extends `Actuator` and sends 0.5–2.4 ms pulses.
-- The `OledDisplay` sends each argument of a command in its own I2C transaction and writes pages with page-addressing
-  commands while the panel is in horizontal mode; in Wokwi every page landed on the first two. `ContainerDisplay`
-  draws in its own frame buffer and sends the setup in one transaction and the frame in 16-byte transactions. The
-  sketch starts the I2C bus (GPIO 21 / 22, 400 kHz), and the screen is sent only when its text changes.
+- The `DhtSensor` drives the line high for 40 µs after the start signal and then switches the pin mode while the sensor
+  already answers, waits for the answer against one 120 µs limit for two phases, reads each bit with two loops that
+  have no time limit (a sensor unplugged in the middle of a frame blocks the sampler task), reads with interrupts on,
+  and ignores the sign of negative DHT22 temperatures. In Wokwi, with the same DHT22, the node froze after its first
+  failed reading: no tags, no telemetry and no LED animation. `ClimateSensor` extends
+  `Sensor` with the pin in open-drain mode, a limit per phase and the frame read in a critical section.
+- The `ServoMotor` turns the angle into a share of the whole 20 ms period (pulse = angle / 180 × 20 ms), while an SG90
+  needs 0.5–2.4 ms; the test of the framework expects those values (duty 4095 of 8191 at 90°). The node uses it with
+  the "angles" that give the pulses of the latch: 5 gives about 0.55 ms (closed, about 4°) and 13 about 1.44 ms (open,
+  about 89°).
+- The `OledDisplay` keeps the index of its frame buffer in a `uint8_t` (`page * 128 + x` in `setPixel()`), so from the
+  third page on every pixel wraps to the first two pages and only the top 16 rows can be drawn. Its `Ssd1306Driver`
+  also writes each page in a transaction of 129 bytes, one more than the I2C buffer of the ESP32.
+  `ContainerDisplay` draws in its own frame buffer and sends the setup in one transaction and the frame in 16-byte
+  transactions. The sketch starts the I2C bus (GPIO 21 / 22, 400 kHz), and the screen is sent only when its text
+  changes.
 - The `DigitalLightIntensitySensor` raises an event only when the light crosses 10 lux, so the device reads the latest
   sample every second.
 - The `RfidSensor` retries its 50 ms reset on every sample while no reader answers, so the device polls it only when
   the reader answered at boot.
+- `HttpGatewayClient::sendTelemetryRecord()` adds the `timestamp` and `sequence` of the framework, which the Edge
+  rejects, so the node posts the JSON of each record with `sendRequest()`. The client sends only the `Authorization`
+  header, so the API key goes as a Bearer token, which the Edge accepts since v0.4.0 (its ADR-0018).
+- `HttpGatewayClient` keeps only 511 bytes of a response, and the configuration of a container (three thresholds and
+  its rules) is longer, so the node reads it with the `HTTPClient` of the ESP32 core and the same Bearer token.
 - On the ESP32 the `MODEST_LOG_*` macros go to the ESP-IDF log, which prints nothing at the default debug level, so
-  the node writes its messages to `Serial` (`NodeLog.h`). Define `NODE_LOG_DEBUG` to also print the requests sent.
+  the node writes its messages with `Serial`, as the examples of the framework do.
+
+## Build with the Arduino IDE
+
+1. Install the ESP32 core (Espressif, 3.x) and, in the Library Manager, `Modest-IoT-Nano-Framework` 1.0.0, which
+   also installs ArduinoJson and MQTT.
+2. Copy `ContainerMonitor/secrets.example.h` as `ContainerMonitor/secrets.h` and set the Wi-Fi network, the URL of
+   the Edge, the identifier of the node, its API key, the UIDs of the authorized tags, and `SERIAL_TAG_INPUT` to
+   `false`.
+3. Open `ContainerMonitor/ContainerMonitor.ino` (the IDE opens the other files of the folder as tabs), choose the
+   board "ESP32 Dev Module" and upload it.
 
 ## Build with arduino-cli
+
+The same steps from a terminal:
 
 1. Install the ESP32 core and the framework v1.0.0 from the Arduino Library Manager, which also installs the
    libraries it depends on (ArduinoJson and MQTT):
@@ -149,8 +177,8 @@ Notes on the framework v1.0.0:
    ```
 
 2. Copy `ContainerMonitor/secrets.example.h` as `ContainerMonitor/secrets.h` and set the Wi-Fi network, the URL of
-   the Edge, the identifier of the node, its API key, the UIDs of the authorized tags, `CLIMATE_SENSOR_MODEL` to
-   `ClimateSensor::MODEL_DHT11` and `SERIAL_TAG_INPUT` to `false`.
+   the Edge, the identifier of the node, its API key, the UIDs of the authorized tags, and `SERIAL_TAG_INPUT` to
+   `false`.
 
 3. Compile (and add `--upload --port <port>` to flash the board):
 
@@ -165,8 +193,8 @@ Notes on the framework v1.0.0:
 1. Create a new ESP32 project in Wokwi.
 2. Paste `ContainerMonitor.ino` into `sketch.ino`, and `diagram.json` and `libraries.txt` into the files of the same
    name.
-3. Add the other `.h` and `.cpp` files of `ContainerMonitor/` (without `secrets.h`, so the sketch takes
-   `secrets.example.h`).
+3. Add `secrets.example.h` and the files of `ClimateSensor` and `ContainerDisplay` (without `secrets.h`, so the sketch
+   takes `secrets.example.h`).
 4. Add `wokwi/bh1750.chip.json` and `wokwi/bh1750.chip.c` with the same names: Wokwi has no BH1750, so this custom
    chip answers on address 0x23 with the luminosity of its slider.
 5. Start the simulation. The first build compiles the whole framework and takes about two minutes.
@@ -178,7 +206,7 @@ What to expect (checked in Wokwi with the ESP32 core of the simulator):
 - Move the temperature of the DHT22 to 27 °C: the LED blinks yellow, the blue "Fan" LED turns on and the screen
   shows `VENTILATION`. At 32 °C the LED blinks red, the screen shows `VENT+COOL` and the buzzer sounds every two
   seconds. Back at 24.8 °C the container stays in WARNING (hysteresis); at 24 °C it is NORMAL and the fan stops.
-- Tags are typed in the serial monitor (one UID per line), since the circuit has no RFID part: `DE:AD:BE:EF` is
+- Tags are typed in the serial monitor (one UID per line), since the Wokwi circuit has no RFID reader: `DE:AD:BE:EF` is
   authorized (green LED for 2 s, `ACCESS GRANTED`, the servo opens for 10 seconds, and in CRITICAL the alarm is
   acknowledged); any other UID is denied (3 red flashes, `ACCESS DENIED`).
 - Move the slider of the BH1750 above 200 lux for a luminosity WARNING.
@@ -191,11 +219,11 @@ What to expect (checked in Wokwi with the ESP32 core of the simulator):
 
 The node talks to the QualiTrack Edge Service (`http://<local station>:5000`) over the local network with JSON over
 HTTP. It sends its `device_id` (the identifier registered in QualiTrack, for example `CNT-001`) in the body or the path
-and the API key the Edge issued for it in the `X-API-Key` header.
+and the API key the Edge issued for it as a Bearer token: `Authorization: Bearer <api key>` (the Edge also accepts it
+in `X-API-Key`).
 
 | Endpoint | Use |
 |----------|-----|
-| `GET /api/v1/health` | Check that the Edge is reachable (no API key) |
 | `POST /api/v1/auth/sign-in` | Check the identifier and the API key of the node |
 | `POST /api/v1/monitoring/container-readings` | Send the temperature, humidity, luminosity and RFID tag measured at one moment |
 | `POST /api/v1/control/actuation-events` | Send an action the container executed (`VENTILATION_ON`, `VENTILATION_OFF`, `COOLING_ON`, `COOLING_OFF`, `SERVO_OPEN`, `SERVO_CLOSE`) |
@@ -226,7 +254,8 @@ Example of a reading and of an action:
 }
 ```
 
-The node sends `profile_version` once it has a profile of the Edge. The Edge answers `201` when it stores the data,
+The node sends `profile_version` once it has a profile of the Edge, and the Edge answers `404` to the configuration
+while it has no profile of the cloud for the node. The Edge answers `201` when it stores the data,
 `200` for an identical retry, `400` for invalid data, `401` for a missing or rejected API key and `409` when a retry
 changes stored data. See the [Edge Service](https://github.com/IoTech-2620-8741/qualitrack-edge-service) for the full
 contract.
@@ -234,7 +263,7 @@ contract.
 ## Technologies
 
 C++ with the Arduino framework for the ESP32, the Modest IoT Nano Framework v1.0.0 and ArduinoJson 7, built with
-arduino-cli and simulated in Wokwi.
+the Arduino IDE or arduino-cli and simulated in Wokwi.
 
 ## Branches and Commits
 
