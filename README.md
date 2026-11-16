@@ -73,7 +73,7 @@ until the container leaves CRITICAL (US74). The screen shows `ALARM ACK` meanwhi
 
 The 0.96" OLED shows, in this order, the identifier of the container and its overall state; the temperature,
 humidity and luminosity, each with its state (`FAULT` for a sensor fault); the active action (`AUTO` when no rule
-acts) and the lock (`LOCKED` or `OPEN`); and the link with the Edge (`ONLINE`, `LINKING` or `NO EDGE`). When a
+acts) and the lock (`LOCKED` or `OPEN`); and the link with the Edge (`ONLINE`, `LINKING` or `OFFLINE`). When a
 tag is presented, it shows `ACCESS GRANTED` or `ACCESS DENIED` with the UID for 3 seconds.
 
 ## Hardware
@@ -90,7 +90,7 @@ Circuit of report section 5.6 (Cirkit Designer). Cabinet of 450 × 450 × 600 mm
 | SG90 servo | Signal / VCC / GND | GPIO 13 / 5V / GND | Latch of the container |
 | 5 V fan | + / − | 5V / collector of the 2N2222 | Emitter of the 2N2222 to GND |
 | 2N2222 transistor | Base | GPIO 12 (1 kΩ) | Switches the fan |
-| RGB LED (common cathode) | R / G / B / GND | GPIO 4 / 16 / 17 (220 Ω each) / GND | Status LED |
+| RGB LED (common cathode) | R / G / B / GND | GPIO 4 / 16 / 17 (200 Ω each) / GND | Status LED |
 | Buzzer | + / − | GPIO 25 / GND | Alarm and access denied sound |
 
 GPIO 2, 12 and 15 are strapping pins of the ESP32: if the RC522 or the transistor cause problems at boot, move them to
@@ -99,49 +99,52 @@ free pins such as GPIO 14 or 27 (report section 5.6) and change the pin constant
 
 ## Firmware
 
-The node is one sketch, as in the examples of the framework, plus two components that replace parts of the
-framework v1.0.0 that do not work (see the notes below):
+The node is one sketch, `ContainerMonitor/ContainerMonitor.ino`, as in the examples of the framework and like the
+Environment Monitor:
 
 | File | Role |
 |------|------|
-| `ContainerMonitor.ino` | The node: pins, profile, the `ContainerReading` and `ActuationEvent` telemetry packages and the `ContainerMonitor` device |
-| `ClimateSensor` | `Sensor` of the DHT22 with a time limit per phase of the protocol (replaces `DhtSensor`) |
-| `ContainerDisplay` | Screen of the OLED, drawn in its own frame buffer and sent to the SSD1306 (replaces `OledDisplay`) |
+| `ContainerMonitor.ino` | The node: pins, profile, the `ContainerReading` and `ActuationEvent` telemetry packages, the `ClimateSensor` and `OledScreen` that replace two classes of the framework, and the `ContainerMonitor` device |
 | `secrets.example.h` | Settings of the node, with the authorized tags; copy it as `secrets.h` (ignored by Git) with the real values |
 | `diagram.json`, `libraries.txt` | Circuit and libraries of the Wokwi project (the Arduino IDE ignores them) |
 | `../wokwi/bh1750.chip.*` | Custom Wokwi chip of the BH1750, which Wokwi does not include (outside the sketch so the Arduino builder does not compile it) |
 
 The sketch writes what the framework asks an application to write: the telemetry packages with the fields of the Edge
 and `ContainerMonitor`, a `Device` that reacts to the events of its sensors and tags, applies the rules, drives the
-lock and the alarm, and animates the status LED. The rest comes from the framework: `DigitalLightIntensitySensor`,
-`RfidSensor`, `ServoMotor`, `RelayActuator`, `RgbLed`, `Buzzer`, `WiFiConnectivityDriver`, `TimeSynchronizationDriver` and
-`HttpGatewayClient`. The profile read from the Edge on the network task reaches the sampler task through
-`enqueueCommand()`: one command starts it, one carries each limit or rule, and the last one applies it.
+lock and the alarm, animates the status LED and lays out the screen. The rest comes from the framework:
+`DigitalLightIntensitySensor`, `RfidSensor`, `ServoMotor`, `RelayActuator`, `RgbLed`, `Buzzer`,
+`WiFiConnectivityDriver`, `TimeSynchronizationDriver` and `HttpGatewayClient`. Two classes of the framework v1.0.0 do
+not work and cannot be fixed by a subclass (see the notes below), so the sketch also writes, on the extension points of
+the framework, `ClimateSensor` (a `Sensor`, in place of `DhtSensor`) and `OledScreen` (an `Actuator` with the drawing
+calls and the update command of `OledDisplay`). The profile read from the Edge on the network task reaches the sampler
+task through `enqueueCommand()`: one command starts it, one carries each limit or rule, and the last one applies it.
 
 The node classifies a reading with the rule of the cloud: a value beyond a critical limit is CRITICAL, beyond a normal
-limit WARNING, and NORMAL otherwise. It sends the climate every minute and at once when the state of a metric
+limit WARNING, and NORMAL otherwise. The luminosity is the moving average of its last 10 samples, one per second,
+against the noise of the BH1750. The node sends the climate every 30 seconds and at once when the state of a metric
 changes, each tag it reads, and each action it executes, but only once its clock is synchronized with NTP, because
 the Edge needs the time of each observation.
 
-Notes on the framework v1.0.0 (its `main` branch has the same sources). The faults of the `DhtSensor` and the
+Notes on the framework v1.0.0 (v1.1.0 has the same sources for these classes). The faults of the `DhtSensor` and the
 `OledDisplay` are in private, non-virtual methods, so a subclass cannot fix them:
 
 - The `DhtSensor` drives the line high for 40 µs after the start signal and then switches the pin mode while the sensor
-  already answers, waits for the answer against one 120 µs limit for two phases, reads each bit with two loops that
-  have no time limit (a sensor unplugged in the middle of a frame blocks the sampler task), reads with interrupts on,
-  and ignores the sign of negative DHT22 temperatures. In Wokwi, with the same DHT22, the node froze after its first
-  failed reading: no tags, no telemetry and no LED animation. `ClimateSensor` extends
-  `Sensor` with the pin in open-drain mode, a limit per phase and the frame read in a critical section.
+  already answers, and waits for the answer against one 120 µs limit for two phases. In Wokwi it never reads the
+  DHT22: every attempt fails and the sensor goes to fault after the third one. It also reads each bit with loops that
+  have no time limit (a sensor unplugged in the middle of a frame blocks the sampler task), never reports the recovery
+  of a fault, and ignores the sign of negative DHT22 temperatures. `ClimateSensor` extends `Sensor` with the pin in
+  open-drain mode, a limit per level of the protocol and the frame read in a critical section.
 - The `ServoMotor` turns the angle into a share of the whole 20 ms period (pulse = angle / 180 × 20 ms), while an SG90
   needs 0.5–2.4 ms; the test of the framework expects those values (duty 4095 of 8191 at 90°). The node uses it with
   the "angles" that give the pulses of the latch: 5 gives about 0.55 ms (closed, about 4°) and 13 about 1.44 ms (open,
   about 89°).
 - The `OledDisplay` keeps the index of its frame buffer in a `uint8_t` (`page * 128 + x` in `setPixel()`), so from the
   third page on every pixel wraps to the first two pages and only the top 16 rows can be drawn. Its `Ssd1306Driver`
-  also writes each page in a transaction of 129 bytes, one more than the I2C buffer of the ESP32.
-  `ContainerDisplay` draws in its own frame buffer and sends the setup in one transaction and the frame in 16-byte
-  transactions. The sketch starts the I2C bus (GPIO 21 / 22, 400 kHz), and the screen is sent only when its text
-  changes.
+  also writes each page in a transaction of 129 bytes, one more than the I2C buffer of the ESP32. `OledScreen` keeps
+  the drawing calls of `OledDisplay` (`setText()`, `drawHorizontalLine()`, `drawRectangle()`, `clearFrameBuffer()`)
+  and its `UPDATE_DISPLAY_COMMAND`, draws in its own frame buffer with the same font, and sends the setup in one
+  transaction and the frame in 16-byte transactions. The sketch starts the I2C bus (GPIO 21 / 22, 400 kHz), and the
+  screen is sent only when its text changes.
 - The `DigitalLightIntensitySensor` raises an event only when the light crosses 10 lux, so the device reads the latest
   sample every second.
 - The `RfidSensor` retries its 50 ms reset on every sample while no reader answers, so the device polls it only when
@@ -161,8 +164,7 @@ Notes on the framework v1.0.0 (its `main` branch has the same sources). The faul
 2. Copy `ContainerMonitor/secrets.example.h` as `ContainerMonitor/secrets.h` and set the Wi-Fi network, the URL of
    the Edge, the identifier of the node, its API key, the UIDs of the authorized tags, and `SERIAL_TAG_INPUT` to
    `false`.
-3. Open `ContainerMonitor/ContainerMonitor.ino` (the IDE opens the other files of the folder as tabs), choose the
-   board "ESP32 Dev Module" and upload it.
+3. Open `ContainerMonitor/ContainerMonitor.ino`, choose the board "ESP32 Dev Module" and upload it.
 
 ## Build with arduino-cli
 
@@ -193,8 +195,7 @@ The same steps from a terminal:
 1. Create a new ESP32 project in Wokwi.
 2. Paste `ContainerMonitor.ino` into `sketch.ino`, and `diagram.json` and `libraries.txt` into the files of the same
    name.
-3. Add `secrets.example.h` and the files of `ClimateSensor` and `ContainerDisplay` (without `secrets.h`, so the sketch
-   takes `secrets.example.h`).
+3. Add `secrets.example.h` (without `secrets.h`, so the sketch takes `secrets.example.h`).
 4. Add `wokwi/bh1750.chip.json` and `wokwi/bh1750.chip.c` with the same names: Wokwi has no BH1750, so this custom
    chip answers on address 0x23 with the luminosity of its slider.
 5. Start the simulation. The first build compiles the whole framework and takes about two minutes.
@@ -209,7 +210,8 @@ What to expect (checked in Wokwi with the ESP32 core of the simulator):
 - Tags are typed in the serial monitor (one UID per line), since the Wokwi circuit has no RFID reader: `DE:AD:BE:EF` is
   authorized (green LED for 2 s, `ACCESS GRANTED`, the servo opens for 10 seconds, and in CRITICAL the alarm is
   acknowledged); any other UID is denied (3 red flashes, `ACCESS DENIED`).
-- Move the slider of the BH1750 above 200 lux for a luminosity WARNING.
+- Move the slider of the BH1750 to 300 lux: the luminosity reaches WARNING about 5 seconds later, when the average of
+  its last 10 samples passes 200 lux.
 - The simulator reaches the internet through `Wokwi-GUEST` but not a local network, so the requests to the Edge fail
   with status -1 unless the Edge has a public address; after 5 minutes without the Edge the LED turns solid red
   (needs review) unless the container is CRITICAL.

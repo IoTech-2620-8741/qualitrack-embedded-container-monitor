@@ -10,9 +10,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - `ContainerMonitor.ino`, one Arduino sketch for the ESP32 DevKit v1 on the Modest IoT Nano Framework v1.0.0, as in
-  the examples of the framework: the `ContainerMonitor` device owns the DHT, BH1750 and RC522 sensors and the servo,
-  fan, RGB LED, buzzer and OLED actuators (MS06–MS11, US71). It opens in the Arduino IDE with the framework installed
-  from the Library Manager.
+  the examples of the framework and like the Environment Monitor: the `ContainerMonitor` device owns the DHT, BH1750
+  and RC522 sensors and the servo, fan, RGB LED, buzzer and OLED actuators (MS06–MS11, US71). It opens in the Arduino
+  IDE with the framework installed from the Library Manager.
+- The luminosity is the moving average of its last 10 samples, and the climate is sent every 30 seconds, as report
+  section 5.6 describes the node (MS07, MS12).
 - Container profile with the thresholds of temperature, humidity and luminosity, the classification rule of the cloud
   with a hysteresis margin per metric, the actuation rules, and a default profile while the Edge has none (MS10, MS15).
 - Ventilation and simulated cooling on the fan, and the opening of the lock for 10 seconds for the authorized tags,
@@ -26,9 +28,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   response, and reaches the sampler task through `enqueueCommand()` (MS15).
 - Wokwi project files, a custom BH1750 chip and the reading of tags typed on the serial monitor, since Wokwi has no
   BH1750 and the Wokwi circuit has no RFID reader.
-- `ClimateSensor` for the DHT22 and the frame buffer of `ContainerDisplay`, which replace the `DhtSensor` and the
-  `OledDisplay` of the framework v1.0.0: in Wokwi the DHT froze the node and the screen could draw only its top 16
-  rows. The `ServoMotor` of the framework drives the latch with the angles that give an SG90 its pulses.
+- `ClimateSensor` (a `Sensor` of the framework) and `OledScreen` (an `Actuator` of the framework), written in the
+  sketch in place of the `DhtSensor` and the `OledDisplay` of the framework v1.0.0: in Wokwi the `DhtSensor` never
+  reads the DHT22, and the `OledDisplay` can draw only the top 16 rows of the screen. The `ServoMotor` of the framework
+  drives the latch with the angles that give an SG90 its pulses.
 - License, changelog and the README with the behavior, the build and the simulation.
 
 ### Changed
