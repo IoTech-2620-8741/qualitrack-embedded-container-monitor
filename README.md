@@ -190,6 +190,9 @@ The same steps from a terminal:
 
 ## Simulate in Wokwi
 
+Open the published project: [qualitrack-container-monitor](https://wokwi.com/projects/480802699328400385). When the
+sketch changes, update its files there, or build a new project with the steps below.
+
 `libraries.txt` takes the framework v1.0.0 from the Arduino Library Manager, as arduino-cli does.
 
 1. Create a new ESP32 project in Wokwi.
