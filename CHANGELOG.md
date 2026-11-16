@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-11-15
+
+First version of the Embedded Application of the Container Monitor: the stories MS06–MS15, US71 and US74 of the
+QualiTrack Report on the Modest IoT Nano Framework v1.0.0.
+
 ### Added
 
 - `ContainerMonitor.ino`, one Arduino sketch for the ESP32 DevKit v1 on the Modest IoT Nano Framework v1.0.0, as in
