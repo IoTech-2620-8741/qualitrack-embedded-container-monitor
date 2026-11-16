@@ -196,8 +196,8 @@ sketch changes, update its files there, or build a new project with the steps be
 `libraries.txt` takes the framework v1.0.0 from the Arduino Library Manager, as arduino-cli does.
 
 1. Create a new ESP32 project in Wokwi.
-2. Paste `ContainerMonitor.ino` into `sketch.ino`, and `diagram.json` and `libraries.txt` into the files of the same
-   name.
+2. Rename `sketch.ino` to `ContainerMonitor.ino`, as in the published project, and paste `ContainerMonitor.ino`,
+   `diagram.json` and `libraries.txt` into the files of the same name.
 3. Add `secrets.example.h` (without `secrets.h`, so the sketch takes `secrets.example.h`).
 4. Add `wokwi/bh1750.chip.json` and `wokwi/bh1750.chip.c` with the same names: Wokwi has no BH1750, so this custom
    chip answers on address 0x23 with the luminosity of its slider.
