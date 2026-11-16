@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.0] - 2026-11-15
+
+First stable version of the Embedded Application of the Container Monitor, with the same behavior as 0.1.0. From this
+version on, a change that breaks the readings, the actions, the sign-in or the profile read from the Edge API raises
+the major version.
+
 ## [0.1.0] - 2026-11-15
 
 First version of the Embedded Application of the Container Monitor: the stories MS06–MS15, US71 and US74 of the
