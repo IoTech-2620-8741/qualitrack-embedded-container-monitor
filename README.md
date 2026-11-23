@@ -254,7 +254,15 @@ Notes:
   ```powershell
   & "C:\wasi-sdk\bin\clang.exe" --target=wasm32-wasip1 --sysroot "C:\wasi-sdk\share\wasi-sysroot" -nostartfiles `
     "-Wl,--import-memory" "-Wl,--export-table" "-Wl,--no-entry" `
-    -o wokwi\bh1750.chip.wasm wokwi\bh1750.chip.c
+    -O2 -s -o wokwi\bh1750.chip.wasm wokwi\bh1750.chip.c
+  ```
+
+  On Linux or macOS, with wasi-sdk in `/opt/wasi-sdk`:
+
+  ```bash
+  /opt/wasi-sdk/bin/clang --target=wasm32-wasip1 --sysroot=/opt/wasi-sdk/share/wasi-sysroot -nostartfiles \
+    -Wl,--import-memory -Wl,--export-table -Wl,--no-entry \
+    -O2 -s -o wokwi/bh1750.chip.wasm wokwi/bh1750.chip.c
   ```
 
   Older wasi-sdk releases use `--target=wasm32-wasi`. The editors mark errors in the `.ino` and in
