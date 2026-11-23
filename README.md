@@ -106,8 +106,9 @@ Environment Monitor:
 |------|------|
 | `ContainerMonitor.ino` | The node: pins, profile, the `ContainerReading` and `ActuationEvent` telemetry packages, the `ClimateSensor` and `OledScreen` that replace two classes of the framework, and the `ContainerMonitor` device |
 | `secrets.example.h` | Settings of the node, with the authorized tags; copy it as `secrets.h` (ignored by Git) with the real values |
-| `diagram.json`, `libraries.txt` | Circuit and libraries of the Wokwi project (the Arduino IDE ignores them) |
-| `../wokwi/bh1750.chip.*` | Custom Wokwi chip of the BH1750, which Wokwi does not include (outside the sketch so the Arduino builder does not compile it) |
+| `libraries.txt` | Libraries of the Wokwi project (the Arduino IDE ignores it) |
+| `../diagram.json`, `../wokwi.toml` | Circuit and configuration of the local simulation, in the root of the repository (see [Simulate locally](#simulate-locally)) |
+| `../wokwi/bh1750.chip.*` | Custom Wokwi chip of the BH1750, which Wokwi does not include (outside the sketch so the Arduino builder does not compile it): source (`.c`), definition (`.json`), compiled chip (`.wasm`) and the Wokwi API header (`wokwi-api.h`) |
 
 The sketch writes what the framework asks an application to write: the telemetry packages with the fields of the Edge
 and `ContainerMonitor`, a `Device` that reacts to the events of its sensors and tags, applies the rules, drives the
@@ -159,8 +160,9 @@ Notes on the framework v1.0.0 (v1.1.0 has the same sources for these classes). T
 
 ## Build with the Arduino IDE
 
-1. Install the ESP32 core (Espressif, 3.x) and, in the Library Manager, `Modest-IoT-Nano-Framework` 1.0.0, which
-   also installs ArduinoJson and MQTT.
+1. Install the ESP32 core (Espressif) 3.3.13, not 4.0.0 or later: with the core 4.0.0 the framework
+   v1.0.0 does not compile (`BLEDevice.h: No such file or directory`). In the Library Manager, install
+   `Modest-IoT-Nano-Framework` 1.0.0, which also installs ArduinoJson and MQTT.
 2. Copy `ContainerMonitor/secrets.example.h` as `ContainerMonitor/secrets.h` and set the Wi-Fi network, the URL of
    the Edge, the identifier of the node, its API key, the UIDs of the authorized tags, and `SERIAL_TAG_INPUT` to
    `false`.
@@ -170,11 +172,12 @@ Notes on the framework v1.0.0 (v1.1.0 has the same sources for these classes). T
 
 The same steps from a terminal:
 
-1. Install the ESP32 core and the framework v1.0.0 from the Arduino Library Manager, which also installs the
-   libraries it depends on (ArduinoJson and MQTT):
+1. Install the ESP32 core 3.3.13 (the latest one, 4.0.0, does not compile the framework v1.0.0) and the
+   framework v1.0.0 from the Arduino Library Manager, which also installs the libraries it depends on
+   (ArduinoJson and MQTT):
 
    ```bash
-   arduino-cli core install esp32:esp32
+   arduino-cli core install esp32:esp32@3.3.13
    arduino-cli lib install "Modest-IoT-Nano-Framework@1.0.0"
    ```
 
@@ -182,10 +185,11 @@ The same steps from a terminal:
    the Edge, the identifier of the node, its API key, the UIDs of the authorized tags, and `SERIAL_TAG_INPUT` to
    `false`.
 
-3. Compile (and add `--upload --port <port>` to flash the board):
+3. Compile (and add `--upload --port <port>` to flash the board). The output goes to `ContainerMonitor/build`, where
+   `wokwi.toml` looks for the firmware:
 
    ```bash
-   arduino-cli compile --fqbn esp32:esp32:esp32 ContainerMonitor
+   arduino-cli compile --fqbn esp32:esp32:esp32 --output-dir ContainerMonitor/build ContainerMonitor
    ```
 
 ## Simulate in Wokwi
@@ -219,6 +223,51 @@ What to expect (checked in Wokwi with the ESP32 core of the simulator):
   with status -1 unless the Edge has a public address; after 5 minutes without the Edge the LED turns solid red
   (needs review) unless the container is CRITICAL.
 - Keep the browser tab in front: a hidden tab slows the simulation to about 1 % of real time.
+
+## Simulate locally
+
+Besides the published project, the repository can be simulated on the computer with the Wokwi extension for VS Code or
+the Wokwi plugin for CLion. `wokwi.toml` and `diagram.json` are in the root of the repository, and the same circuit is
+used on wokwi.com.
+
+1. Build the firmware as in [Build with arduino-cli](#build-with-arduino-cli): the core 3.3.13, the framework
+   v1.0.0 and the command with `--output-dir ContainerMonitor/build`. `secrets.h` is optional: without it the sketch
+   takes `secrets.example.h`. The `build` folder is not versioned, so it has to exist before the simulation starts.
+2. Get a free Wokwi Community license:
+   - VS Code: install the Wokwi Simulator extension and run `Wokwi: Request a New License` from the command palette.
+   - CLion: install the Wokwi Simulator plugin, activate the license, and choose `wokwi.toml` and `diagram.json` of
+     the root with the folder icon of its settings.
+3. Open `diagram.json` and start the simulation. `wokwi.toml` points to
+   `ContainerMonitor/build/ContainerMonitor.ino.merged.bin` and `.elf`, and declares the custom chip
+   `wokwi/bh1750.chip.wasm`. The BH1750 shows up wired to GPIO 21 and 22, and the screen shows `LUX 120` until the
+   slider of the chip changes.
+
+Notes:
+
+- BLE does not work in the simulator, and MQTT and the Edge are reachable only if they have a public address, as in the
+  published project.
+- Build the firmware again, and restart the simulation, after every change in the sketch.
+- The compiled chip `wokwi/bh1750.chip.wasm` is versioned so that nobody needs the WASI toolchain just to simulate. To
+  rebuild it after changing `bh1750.chip.c`, install [wasi-sdk](https://github.com/WebAssembly/wasi-sdk) and run it
+  from the root of the repository:
+
+  ```powershell
+  & "C:\wasi-sdk\bin\clang.exe" --target=wasm32-wasip1 --sysroot "C:\wasi-sdk\share\wasi-sysroot" -nostartfiles `
+    "-Wl,--import-memory" "-Wl,--export-table" "-Wl,--no-entry" `
+    -O2 -s -o wokwi\bh1750.chip.wasm wokwi\bh1750.chip.c
+  ```
+
+  On Linux or macOS, with wasi-sdk in `/opt/wasi-sdk`:
+
+  ```bash
+  /opt/wasi-sdk/bin/clang --target=wasm32-wasip1 --sysroot=/opt/wasi-sdk/share/wasi-sysroot -nostartfiles \
+    -Wl,--import-memory -Wl,--export-table -Wl,--no-entry \
+    -O2 -s -o wokwi/bh1750.chip.wasm wokwi/bh1750.chip.c
+  ```
+
+  Older wasi-sdk releases use `--target=wasm32-wasi`. The editors mark errors in the `.ino` and in
+  `bh1750.chip.c` because they do not know the include paths of the ESP32 core or of the Wokwi API: the build is the
+  reference.
 
 ## Contract with the Edge API
 

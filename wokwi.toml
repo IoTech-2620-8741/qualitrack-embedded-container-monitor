@@ -1,0 +1,8 @@
+[wokwi]
+version = 1
+firmware = 'ContainerMonitor/build/ContainerMonitor.ino.merged.bin'
+elf = 'ContainerMonitor/build/ContainerMonitor.ino.elf'
+
+[[chip]]
+name = 'bh1750'
+binary = 'wokwi/bh1750.chip.wasm'
