@@ -20,7 +20,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - `diagram.json` moves from `ContainerMonitor/` to the root of the repository, next to `wokwi.toml`, with the same
   content, so the Wokwi extension and plugin find it. The published Wokwi project is not affected.
-- The README fixes the ESP32 core to <3.x version> and compiles with `--output-dir ContainerMonitor/build`: the
+- The README fixes the ESP32 core to 3.3.13 and compiles with `--output-dir ContainerMonitor/build`: the
   core 4.0.0 does not compile the framework v1.0.0 (`BLEDevice.h` not found).
 
 ## [1.0.0] - 2026-11-15

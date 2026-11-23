@@ -160,7 +160,7 @@ Notes on the framework v1.0.0 (v1.1.0 has the same sources for these classes). T
 
 ## Build with the Arduino IDE
 
-1. Install the ESP32 core (Espressif) <3.x version>, not 4.0.0 or later: with the core 4.0.0 the framework
+1. Install the ESP32 core (Espressif) 3.3.13, not 4.0.0 or later: with the core 4.0.0 the framework
    v1.0.0 does not compile (`BLEDevice.h: No such file or directory`). In the Library Manager, install
    `Modest-IoT-Nano-Framework` 1.0.0, which also installs ArduinoJson and MQTT.
 2. Copy `ContainerMonitor/secrets.example.h` as `ContainerMonitor/secrets.h` and set the Wi-Fi network, the URL of
@@ -172,12 +172,12 @@ Notes on the framework v1.0.0 (v1.1.0 has the same sources for these classes). T
 
 The same steps from a terminal:
 
-1. Install the ESP32 core <3.x version> (the latest one, 4.0.0, does not compile the framework v1.0.0) and the
+1. Install the ESP32 core 3.3.13 (the latest one, 4.0.0, does not compile the framework v1.0.0) and the
    framework v1.0.0 from the Arduino Library Manager, which also installs the libraries it depends on
    (ArduinoJson and MQTT):
 
    ```bash
-   arduino-cli core install esp32:esp32@<3.x version>
+   arduino-cli core install esp32:esp32@3.3.13
    arduino-cli lib install "Modest-IoT-Nano-Framework@1.0.0"
    ```
 
@@ -230,7 +230,7 @@ Besides the published project, the repository can be simulated on the computer w
 the Wokwi plugin for CLion. `wokwi.toml` and `diagram.json` are in the root of the repository, and the same circuit is
 used on wokwi.com.
 
-1. Build the firmware as in [Build with arduino-cli](#build-with-arduino-cli): the core <3.x version>, the framework
+1. Build the firmware as in [Build with arduino-cli](#build-with-arduino-cli): the core 3.3.13, the framework
    v1.0.0 and the command with `--output-dir ContainerMonitor/build`. `secrets.h` is optional: without it the sketch
    takes `secrets.example.h`. The `build` folder is not versioned, so it has to exist before the simulation starts.
 2. Get a free Wokwi Community license:
