@@ -13,7 +13,3 @@ cmake-build-*/
 # Operating system
 .DS_Store
 Thumbs.db
-
-# Build
-ContainerMonitor/build/
-ContainerMonitor/secrets.h
