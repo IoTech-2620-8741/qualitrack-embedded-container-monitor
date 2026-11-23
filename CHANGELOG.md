@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.1] - 2026-11-23
+
+### Added
+
+- Local simulation in Wokwi from VS Code or CLion: `wokwi.toml` with the firmware built by arduino-cli in
+  `ContainerMonitor/build` and the custom BH1750 chip, and the compiled chip `wokwi/bh1750.chip.wasm` with its API
+  header `wokwi/wokwi-api.h`.
+- A "Simulate locally" section in the README, with the build, the license, the simulation and how to rebuild the chip.
+
+### Changed
+
+- `diagram.json` moves from `ContainerMonitor/` to the root of the repository, next to `wokwi.toml`, with the same
+  content, so the Wokwi extension and plugin find it. The published Wokwi project is not affected.
+- The README fixes the ESP32 core to <3.x version> and compiles with `--output-dir ContainerMonitor/build`: the
+  core 4.0.0 does not compile the framework v1.0.0 (`BLEDevice.h` not found).
+
 ## [1.0.0] - 2026-11-15
 
 First stable version of the Embedded Application of the Container Monitor, with the same behavior as 0.1.0. From this
