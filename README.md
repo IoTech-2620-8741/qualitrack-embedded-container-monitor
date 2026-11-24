@@ -53,8 +53,8 @@ A critical alert has priority over the review signal, and the review signal over
 
 | Event | Action |
 |-------|--------|
-| Temperature in WARNING | Ventilation (`VENTILATION_ON`) |
-| Temperature in CRITICAL | Ventilation and cooling on the fan (`COOLING_ON`) and the buzzer every 2 seconds |
+| Temperature in WARNING | Ventilation: the fan at half speed (`VENTILATION_ON`) |
+| Temperature in CRITICAL | Ventilation and cooling, the fan at full speed (`COOLING_ON`); the buzzer every 2 s |
 | Authorized RFID tag | The servo opens the container (`SERVO_OPEN`) for 10 seconds |
 | Unknown RFID tag | Buzzer and red LED; the container stays closed |
 | End of the opening time | The servo closes the container (`SERVO_CLOSE`) |
@@ -63,8 +63,11 @@ A critical alert has priority over the review signal, and the review signal over
 The rules come from the profile: each one names a metric, a state and an action, and it keeps acting while the metric
 is in that state or a worse one. A metric returns to a better state only once it is inside its range by the hysteresis
 margin (0.5 °C, 2 % or 10 lux), so an action does not switch on and off around a limit (MS10). Ventilation and
-cooling share the 5 V fan of the container. The node reports every action to the Edge with its cause (metric and
-state) and its result (`EXECUTED` or `FAILED`); an opening or closing because of a tag has no cause.
+cooling share the 5 V fan of the container, driven with PWM: ventilation runs it at half speed and cooling at full
+speed, and a stopped fan starts at full speed for half a second, since a small fan may not start at half speed. The
+node reports every action to the Edge with its cause (metric and state) and its result (`EXECUTED` or `FAILED`); an
+opening or closing because of a tag has no cause. A fan action is `EXECUTED` when the PWM output took the new speed:
+the fan has no tachometer, so the node cannot tell whether it turns.
 
 An authorized tag presented while the container is CRITICAL also acknowledges the local alarm and silences the buzzer
 until the container leaves CRITICAL (US74). The screen shows `ALARM ACK` meanwhile.
@@ -89,13 +92,15 @@ Circuit of report section 5.6 (Cirkit Designer). Cabinet of 450 × 450 × 600 mm
 | DHT22 sensor | VCC / DATA / GND | 3V3 / GPIO 15 / GND | Temperature and humidity |
 | SG90 servo | Signal / VCC / GND | GPIO 13 / 5V / GND | Latch of the container |
 | 5 V fan | + / − | 5V / collector of the 2N2222 | Emitter of the 2N2222 to GND |
-| 2N2222 transistor | Base | GPIO 12 (1 kΩ) | Switches the fan |
+| 1N4007 diode | Cathode / anode | 5V / collector of the 2N2222 | Across the fan, against the spike when it stops |
+| 2N2222 transistor | Base | GPIO 26 (1 kΩ) | Switches the fan with PWM (1 kHz) |
 | RGB LED (common cathode) | R / G / B / GND | GPIO 4 / 16 / 17 (200 Ω each) / GND | Status LED |
 | Buzzer | + / − | GPIO 25 / GND | Alarm and access denied sound |
 
-GPIO 2, 12 and 15 are strapping pins of the ESP32: if the RC522 or the transistor cause problems at boot, move them to
-free pins such as GPIO 14 or 27 (report section 5.6) and change the pin constants at the top of
-`ContainerMonitor.ino`.
+GPIO 2 and 15 are strapping pins of the ESP32: if the RC522 causes problems at boot, move it to a free pin such as
+GPIO 27 (report section 5.6) and change the pin constants at the top of `ContainerMonitor.ino`. The fan is on GPIO 26
+instead of the GPIO 12 of report section 5.6, because GPIO 12 sets the voltage of the flash at boot and a load on it
+can keep the board from starting.
 
 ## Firmware
 
@@ -104,7 +109,7 @@ Environment Monitor:
 
 | File | Role |
 |------|------|
-| `ContainerMonitor.ino` | The node: pins, profile, the `ContainerReading` and `ActuationEvent` telemetry packages, the `ClimateSensor` and `OledScreen` that replace two classes of the framework, and the `ContainerMonitor` device |
+| `ContainerMonitor.ino` | The node: pins, profile, the `ContainerReading` and `ActuationEvent` telemetry packages, the `ClimateSensor` and `OledScreen` that replace two classes of the framework, the `PwmFan`, and the `ContainerMonitor` device |
 | `secrets.example.h` | Settings of the node, with the authorized tags; copy it as `secrets.h` (ignored by Git) with the real values |
 | `diagram.json`, `libraries.txt` | Circuit and libraries of the Wokwi project (the Arduino IDE ignores them) |
 | `../wokwi/bh1750.chip.*` | Custom Wokwi chip of the BH1750, which Wokwi does not include (outside the sketch so the Arduino builder does not compile it) |
@@ -112,12 +117,14 @@ Environment Monitor:
 The sketch writes what the framework asks an application to write: the telemetry packages with the fields of the Edge
 and `ContainerMonitor`, a `Device` that reacts to the events of its sensors and tags, applies the rules, drives the
 lock and the alarm, animates the status LED and lays out the screen. The rest comes from the framework:
-`DigitalLightIntensitySensor`, `RfidSensor`, `ServoMotor`, `RelayActuator`, `RgbLed`, `Buzzer`,
-`WiFiConnectivityDriver`, `TimeSynchronizationDriver` and `HttpGatewayClient`. Two classes of the framework v1.0.0 do
-not work and cannot be fixed by a subclass (see the notes below), so the sketch also writes, on the extension points of
-the framework, `ClimateSensor` (a `Sensor`, in place of `DhtSensor`) and `OledScreen` (an `Actuator` with the drawing
-calls and the update command of `OledDisplay`). The profile read from the Edge on the network task reaches the sampler
-task through `enqueueCommand()`: one command starts it, one carries each limit or rule, and the last one applies it.
+`DigitalLightIntensitySensor`, `RfidSensor`, `ServoMotor`, `RgbLed`, `Buzzer`, `WiFiConnectivityDriver`,
+`TimeSynchronizationDriver` and `HttpGatewayClient`. Two classes of the framework v1.0.0 do not work and cannot be
+fixed by a subclass (see the notes below), so the sketch also writes, on the extension points of the framework,
+`ClimateSensor` (a `Sensor`, in place of `DhtSensor`) and `OledScreen` (an `Actuator` with the drawing calls and the
+update command of `OledDisplay`). The `RelayActuator` of the framework only turns its pin fully on or off, so the
+sketch also writes `PwmFan` (an `Actuator` whose `SET_SPEED_COMMAND` carries the speed in percent) for the fan. The
+profile read from the Edge on the network task reaches the sampler task through `enqueueCommand()`: one command starts
+it, one carries each limit or rule, and the last one applies it.
 
 The node classifies a reading with the rule of the cloud: a value beyond a critical limit is CRITICAL, beyond a normal
 limit WARNING, and NORMAL otherwise. The luminosity is the moving average of its last 10 samples, one per second,
@@ -207,9 +214,10 @@ What to expect (checked in Wokwi with the ESP32 core of the simulator):
 
 - The LED pulses blue while the node looks for the Edge and the screen shows `CNT-001 NORMAL`, the three metrics and
   `AUTO - LOCKED`.
-- Move the temperature of the DHT22 to 27 °C: the LED blinks yellow, the blue "Fan" LED turns on and the screen
-  shows `VENTILATION`. At 32 °C the LED blinks red, the screen shows `VENT+COOL` and the buzzer sounds every two
-  seconds. Back at 24.8 °C the container stays in WARNING (hysteresis); at 24 °C it is NORMAL and the fan stops.
+- Move the temperature of the DHT22 to 27 °C: the LED blinks yellow, the blue "Fan" LED lights fully for half a
+  second and then at half brightness (half speed), and the screen shows `VENTILATION`. At 32 °C the LED blinks red,
+  the "Fan" LED lights fully (full speed), the screen shows `VENT+COOL` and the buzzer sounds every two seconds. Back
+  at 24.8 °C the container stays in WARNING (hysteresis); at 24 °C it is NORMAL and the fan stops.
 - Tags are typed in the serial monitor (one UID per line), since the Wokwi circuit has no RFID reader: `DE:AD:BE:EF` is
   authorized (green LED for 2 s, `ACCESS GRANTED`, the servo opens for 10 seconds, and in CRITICAL the alarm is
   acknowledged); any other UID is denied (3 red flashes, `ACCESS DENIED`).

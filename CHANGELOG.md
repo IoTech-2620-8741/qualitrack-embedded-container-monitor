@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- The fan runs with PWM through the new `PwmFan`, an `Actuator` of the framework, in place of the `RelayActuator`:
+  ventilation at half speed and simulated cooling at full speed, and a stopped fan starts at full speed for half a
+  second (MS10).
+- A fan action is reported as `EXECUTED` when the PWM output took the new speed, instead of reading the level of the
+  pin (MS13).
+- The fan is on GPIO 26 instead of GPIO 12, a strapping pin that sets the voltage of the flash at boot; the hardware
+  table adds the 1N4007 diode across the fan.
+
 ## [1.0.0] - 2026-11-15
 
 First stable version of the Embedded Application of the Container Monitor, with the same behavior as 0.1.0. From this

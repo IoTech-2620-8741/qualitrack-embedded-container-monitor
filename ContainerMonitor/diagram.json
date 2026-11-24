@@ -35,7 +35,7 @@
     [ "servo:PWM", "esp:D13", "orange", [] ],
     [ "buzzer:2", "esp:D25", "green", [] ],
     [ "buzzer:1", "esp:GND.2", "black", [] ],
-    [ "fan:A", "esp:D12", "cyan", [] ],
+    [ "fan:A", "esp:D26", "cyan", [] ],
     [ "fan:C", "r-fan:1", "black", [] ],
     [ "r-fan:2", "esp:GND.2", "black", [] ],
     [ "rgb:R", "r-red:1", "red", [] ],
