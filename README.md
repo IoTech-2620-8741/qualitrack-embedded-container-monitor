@@ -8,7 +8,7 @@ tags of the people who open the container, evaluates the environmental profile o
 sends its readings and actions to the QualiTrack Edge Service of the facility.
 
 The firmware is an Arduino sketch built on the [Modest IoT Nano Framework](https://github.com/modest-iot/modest-iot-nano-framework)
-v1.0.0, and it runs on the ESP32 DevKit v1 and in the [Wokwi](https://wokwi.com) simulator.
+v1.3.0, and it runs on the ESP32 DevKit v1 and in the [Wokwi](https://wokwi.com) simulator.
 
 ## Responsibilities
 
@@ -114,7 +114,7 @@ The sketch writes what the framework asks an application to write: the telemetry
 and `ContainerMonitor`, a `Device` that reacts to the events of its sensors and tags, applies the rules, drives the
 lock and the alarm, animates the status LED and lays out the screen. The rest comes from the framework:
 `DigitalLightIntensitySensor`, `RfidSensor`, `ServoMotor`, `RelayActuator`, `RgbLed`, `Buzzer`,
-`WiFiConnectivityDriver`, `TimeSynchronizationDriver` and `HttpGatewayClient`. Two classes of the framework v1.0.0 do
+`WiFiConnectivityDriver`, `TimeSynchronizationDriver` and `HttpGatewayClient`. Two classes of the framework do
 not work and cannot be fixed by a subclass (see the notes below), so the sketch also writes, on the extension points of
 the framework, `ClimateSensor` (a `Sensor`, in place of `DhtSensor`) and `OledScreen` (an `Actuator` with the drawing
 calls and the update command of `OledDisplay`). The profile read from the Edge on the network task reaches the sampler
@@ -126,7 +126,7 @@ against the noise of the BH1750. The node sends the climate every 30 seconds and
 changes, each tag it reads, and each action it executes, but only once its clock is synchronized with NTP, because
 the Edge needs the time of each observation.
 
-Notes on the framework v1.0.0 (v1.1.0 has the same sources for these classes). The faults of the `DhtSensor` and the
+Notes on the framework v1.3.0 (these classes keep the sources of v1.0.0). The faults of the `DhtSensor` and the
 `OledDisplay` are in private, non-virtual methods, so a subclass cannot fix them:
 
 - The `DhtSensor` drives the line high for 40 µs after the start signal and then switches the pin mode while the sensor
@@ -160,9 +160,9 @@ Notes on the framework v1.0.0 (v1.1.0 has the same sources for these classes). T
 
 ## Build with the Arduino IDE
 
-1. Install the ESP32 core (Espressif) 3.3.13, not 4.0.0 or later: with the core 4.0.0 the framework
-   v1.0.0 does not compile (`BLEDevice.h: No such file or directory`). In the Library Manager, install
-   `Modest-IoT-Nano-Framework` 1.0.0, which also installs ArduinoJson and MQTT.
+1. Install the ESP32 core (Espressif) 3.3.13. In the Library Manager, install `Modest-IoT-Nano-Framework` 1.3.0,
+   which also installs MQTT, and ArduinoJson 7, which reads the configuration of the Edge (the framework no longer
+   brings it). The framework 1.3.0 compiles on the cores 3.x and 4.x; the node is checked on the core 3.3.
 2. Copy `ContainerMonitor/secrets.example.h` as `ContainerMonitor/secrets.h` and set the Wi-Fi network, the URL of
    the Edge, the identifier of the node, its API key, the UIDs of the authorized tags, and `SERIAL_TAG_INPUT` to
    `false`.
@@ -172,13 +172,12 @@ Notes on the framework v1.0.0 (v1.1.0 has the same sources for these classes). T
 
 The same steps from a terminal:
 
-1. Install the ESP32 core 3.3.13 (the latest one, 4.0.0, does not compile the framework v1.0.0) and the
-   framework v1.0.0 from the Arduino Library Manager, which also installs the libraries it depends on
-   (ArduinoJson and MQTT):
+1. Install the ESP32 core 3.3.13, the framework v1.3.0 from the Arduino Library Manager, which also installs MQTT,
+   and ArduinoJson:
 
    ```bash
    arduino-cli core install esp32:esp32@3.3.13
-   arduino-cli lib install "Modest-IoT-Nano-Framework@1.0.0"
+   arduino-cli lib install "Modest-IoT-Nano-Framework@1.3.0" ArduinoJson
    ```
 
 2. Copy `ContainerMonitor/secrets.example.h` as `ContainerMonitor/secrets.h` and set the Wi-Fi network, the URL of
@@ -197,7 +196,9 @@ The same steps from a terminal:
 Open the published project: [qualitrack-container-monitor](https://wokwi.com/projects/480802699328400385). When the
 sketch changes, update its files there, or build a new project with the steps below.
 
-`libraries.txt` takes the framework v1.0.0 from the Arduino Library Manager, as arduino-cli does.
+`libraries.txt` takes the framework v1.3.0 from the Arduino Library Manager, as arduino-cli does. Keep the version
+written: Wokwi may still resolve the bare name to the framework 1.2.1, which does not compile on its ESP32 core 3.3.12
+(`BLE.h: No such file or directory`).
 
 1. Create a new ESP32 project in Wokwi.
 2. Rename `sketch.ino` to `ContainerMonitor.ino`, as in the published project, and paste `ContainerMonitor.ino`,
@@ -232,7 +233,7 @@ the Wokwi plugin for CLion. `wokwi.toml` and `diagram.json` are in the root of t
 used on wokwi.com.
 
 1. Build the firmware as in [Build with arduino-cli](#build-with-arduino-cli): the core 3.3.13, the framework
-   v1.0.0 and the command with `--output-dir ContainerMonitor/build`. `secrets.h` is optional: without it the sketch
+   v1.3.0 and the command with `--output-dir ContainerMonitor/build`. `secrets.h` is optional: without it the sketch
    takes `secrets.example.h`. The `build` folder is not versioned, so it has to exist before the simulation starts.
 2. Get a free Wokwi Community license:
    - VS Code: install the Wokwi Simulator extension and run `Wokwi: Request a New License` from the command palette.
@@ -317,7 +318,7 @@ contract.
 
 ## Technologies
 
-C++ with the Arduino framework for the ESP32, the Modest IoT Nano Framework v1.0.0 and ArduinoJson 7, built with
+C++ with the Arduino framework for the ESP32, the Modest IoT Nano Framework v1.3.0 and ArduinoJson 7, built with
 the Arduino IDE or arduino-cli and simulated in Wokwi.
 
 ## Branches and Commits
