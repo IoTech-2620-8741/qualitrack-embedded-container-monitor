@@ -35,7 +35,8 @@ static constexpr const char* NTP_SERVER = "pool.ntp.org";
 /// UIDs of the tags of the authorized staff, as the RC522 reads them (hexadecimal bytes separated by ':').
 static constexpr const char* AUTHORIZED_TAGS[] = {
     "DE:AD:BE:EF",
-    "A1:B2:C3:D4"
+    "A1:B2:C3:D4",
+    "01:02:03:04"
 };
 
 /// Also read tags typed on the serial monitor (one UID per line): the Wokwi circuit has no RC522.

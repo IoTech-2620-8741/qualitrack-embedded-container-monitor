@@ -47,6 +47,7 @@
  * | Buzzer | GPIO 25 |
  */
 #include <ModestIoT.h>
+#include <ESP32Servo.h>
 #include <HTTPClient.h>
 #include <WiFiClient.h>
 #include <Wire.h>
@@ -58,6 +59,7 @@
 #include <initializer_list>
 #include <memory>
 #include <strings.h>
+#include "MonitorServo.h"
 
 #if __has_include("secrets.h")
 #include "secrets.h"
@@ -671,7 +673,7 @@ private:
     // The ServoMotor sends a pulse of angle / 180 of its 20 ms period, while an SG90 takes 0.5-2.4 ms for 0-180 degrees,
     // so these "angles" are the pulses of the latch: 5 gives about 0.55 ms (closed, about 4 degrees) and 13 about 1.44 ms
     // (open, about 89 degrees).
-    static constexpr int LOCK_CLOSED_ANGLE = 5, LOCK_OPEN_ANGLE = 13;
+    static constexpr int LOCK_CLOSED_ANGLE = 0, LOCK_OPEN_ANGLE = 90;
     static constexpr unsigned long OPENING_DURATION = 10000;  // Lock open after an authorized tag.
     static constexpr unsigned long REVIEW_TIMEOUT = 300000;   // Without the Edge, the node needs review.
     static constexpr unsigned long RETRY_INTERVAL = 30000;
@@ -689,7 +691,7 @@ private:
     ClimateSensor climateSensor;
     DigitalLightIntensitySensor lightSensor;
     RfidSensor tagReader;
-    ServoMotor lockServo;
+    MonitorServo lockServo;
     RelayActuator fan;
     RgbLed statusLed;
     Buzzer alarmBuzzer;
