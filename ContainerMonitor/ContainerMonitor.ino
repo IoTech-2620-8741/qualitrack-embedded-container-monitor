@@ -26,13 +26,14 @@
  * The sketch takes from the framework the `DigitalLightIntensitySensor`, `RfidSensor`, `ServoMotor`, `RelayActuator`,
  * `RgbLed`, `Buzzer`, `WiFiConnectivityDriver`, `TimeSynchronizationDriver` and `HttpGatewayClient`, and writes what
  * the framework asks an application to write: the telemetry packages of the Edge and the device that reacts to the
- * events. Two classes of the framework v1.0.0 do not work and cannot be fixed by a subclass (see the README): the
+ * events. Two classes of the framework do not work and cannot be fixed by a subclass (see the README): the
  * `DhtSensor` never reads the DHT22 in Wokwi and the `OledDisplay` draws only the top 16 rows. So the sketch also
  * writes `ClimateSensor`, a `Sensor` of the framework for the DHT, and `OledScreen`, an `Actuator` of the framework
  * for the OLED, and nothing else.
  *
- * Requirements: ESP32 core 3.x and the library Modest-IoT-Nano-Framework 1.0.0 (Arduino Library Manager, with
- * ArduinoJson and MQTT). Copy secrets.example.h as secrets.h with the values of the node.
+ * Requirements: ESP32 core 3.x or 4.x, and the libraries Modest-IoT-Nano-Framework 1.3.0 (Arduino Library Manager,
+ * with MQTT) and ArduinoJson 7, which reads the configuration of the Edge. Copy secrets.example.h as secrets.h with the
+ * values of the node.
  *
  * Circuit of report section 5.6:
  *
@@ -47,6 +48,7 @@
  * | Buzzer | GPIO 25 |
  */
 #include <ModestIoT.h>
+#include <ArduinoJson.h> // The framework writes the telemetry; ArduinoJson reads the configuration.
 #include <HTTPClient.h>
 #include <WiFiClient.h>
 #include <Wire.h>
@@ -173,7 +175,7 @@ private:
 };
 
 /** @brief Action a container starts while a metric is in a state or worse (a WARNING rule keeps acting on CRITICAL). */
-struct Rule {
+struct ProfileRule {
     Metric metric;
     State state;
     Action action;
@@ -184,7 +186,7 @@ struct Profile {
     static constexpr size_t MAXIMUM_RULE_COUNT = 12;
 
     Threshold thresholds[METRIC_COUNT];
-    Rule rules[MAXIMUM_RULE_COUNT]{};
+    ProfileRule rules[MAXIMUM_RULE_COUNT]{};
     size_t ruleCount = 0;
     uint32_t version = 0; // 0 = default profile of the node, until the Edge hands one.
 
@@ -199,7 +201,7 @@ struct Profile {
         return profile;
     }
 
-    bool addRule(const Rule& rule) {
+    bool addRule(const ProfileRule& rule) {
         if (ruleCount >= MAXIMUM_RULE_COUNT || rule.state == State::Normal) return false;
         if (!thresholds[static_cast<int>(rule.metric)].isDefined()) return false;
         rules[ruleCount++] = rule;
@@ -221,15 +223,15 @@ public:
 protected:
     EdgeRecord(uint32_t observedAt, uint32_t profileVersion) : observedAt(observedAt), profileVersion(profileVersion) {}
 
-    void serializeCommon(JsonDocument& json, const char* timeKey) const {
+    void writeCommon(TelemetryWriter& writer, const char* timeKey) const {
         char isoTime[21];
         const time_t seconds = observedAt;
         tm utc{};
         gmtime_r(&seconds, &utc);
         strftime(isoTime, sizeof(isoTime), "%Y-%m-%dT%H:%M:%SZ", &utc);
-        json["device_id"] = DEVICE_ID;
-        json[timeKey] = isoTime; // A char array is copied into the document.
-        if (profileVersion != 0) json["profile_version"] = profileVersion;
+        writer.field("device_id", DEVICE_ID);
+        writer.field(timeKey, isoTime); // The writer copies the text into its buffer.
+        if (profileVersion != 0) writer.field("profile_version", static_cast<int32_t>(profileVersion));
     }
 
 private:
@@ -257,13 +259,13 @@ public:
 
     bool isActuationEvent() const override { return false; }
 
-    void serialize(JsonDocument& json) const override {
-        serializeCommon(json, "measured_at");
+    void write(TelemetryWriter& writer) const override {
+        writeCommon(writer, "measured_at");
         static const char* const KEYS[] = {"temperature", "humidity", "luminosity"};
         for (size_t i = 0; i < METRIC_COUNT; i++) {
-            if (!std::isnan(values[i])) json[KEYS[i]] = roundf(values[i] * 10.0f) / 10.0f;
+            if (!std::isnan(values[i])) writer.field(KEYS[i], roundf(values[i] * 10.0f) / 10.0f);
         }
-        if (tag[0] != '\0') json["rfid_tag"] = static_cast<const char*>(tag);
+        if (tag[0] != '\0') writer.field("rfid_tag", static_cast<const char*>(tag));
     }
 
 private:
@@ -284,14 +286,14 @@ public:
 
     bool isActuationEvent() const override { return true; }
 
-    void serialize(JsonDocument& json) const override {
-        json["action"] = Names::of(action, on);
+    void write(TelemetryWriter& writer) const override {
+        writer.field("action", Names::of(action, on));
         if (hasCause) { // The Edge takes both trigger fields or neither.
-            json["trigger_metric"] = Names::of(metric);
-            json["trigger_state"] = Names::of(state);
+            writer.field("trigger_metric", Names::of(metric));
+            writer.field("trigger_state", Names::of(state));
         }
-        json["result"] = executed ? "EXECUTED" : "FAILED";
-        serializeCommon(json, "occurred_at");
+        writer.field("result", executed ? "EXECUTED" : "FAILED");
+        writeCommon(writer, "occurred_at");
     }
 
 private:
@@ -634,10 +636,11 @@ protected:
     void processQueuedTelemetryData(const TelemetryPackage* package) const override {
         if (package == nullptr) return;
         const auto* record = static_cast<const EdgeRecord*>(package); // Every package of this node is an EdgeRecord.
-        JsonDocument json;
-        record->serialize(json);
-        char body[320];
-        serializeJson(json, body, sizeof(body));
+        // Only the fields of the record: serializeToBuffer() would add the envelope of the framework.
+        JsonTelemetryWriter writer;
+        record->write(writer);
+        writer.finalize();
+        const char* body = writer.getString();
         // The client keeps the pointer to the URL, so each route has its own buffer.
         edge.setServiceEndpointUrl(record->isActuationEvent() ? actuationEventsUrl : readingsUrl);
         if (edge.sendRequest(HttpGatewayClient::HttpMethod::Post, body)) {
@@ -787,7 +790,7 @@ private:
         bool wanted[ACTION_COUNT] = {false, false, false};
         Metric cause[ACTION_COUNT] = {Metric::Temperature, Metric::Temperature, Metric::Temperature};
         for (size_t r = 0; r < profile.ruleCount; r++) {
-            const Rule& rule = profile.rules[r];
+            const ProfileRule& rule = profile.rules[r];
             const int action = static_cast<int>(rule.action);
             if (!wanted[action] && states[static_cast<int>(rule.metric)] >= rule.state) {
                 wanted[action] = true;
@@ -1168,7 +1171,7 @@ private:
             }
         }
         for (size_t r = 0; queued && r < edgeProfile.ruleCount; r++) {
-            const Rule& rule = edgeProfile.rules[r];
+            const ProfileRule& rule = edgeProfile.rules[r];
             const int32_t payload = static_cast<int32_t>(rule.metric) | static_cast<int32_t>(rule.state) << 8 |
                                     static_cast<int32_t>(rule.action) << 16;
             queued = device->enqueueCommand(device, Command{ADD_RULE, payload});
