@@ -13,6 +13,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `ContainerMonitor/build` and the custom BH1750 chip, and the compiled chip `wokwi/bh1750.chip.wasm` with its API
   header `wokwi/wokwi-api.h`.
 - A "Simulate locally" section in the README, with the build, the license, the simulation and how to rebuild the chip.
+- The Wokwi circuit has the MFRC522 RFID reader on the SPI bus (SDA GPIO 5, RST GPIO 2), which the `RfidSensor` of the
+  framework reads: the Blue Card has the authorized UID `DE:AD:BE:EF`, the other cards are denied, and UIDs can still
+  be typed in the serial monitor. The lock keeps the `ServoMotor` of the framework and the servo is powered from VIN
+  (#6, #7).
 
 ### Changed
 

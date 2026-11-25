@@ -214,9 +214,10 @@ What to expect (checked in Wokwi with the ESP32 core of the simulator):
 - Move the temperature of the DHT22 to 27 °C: the LED blinks yellow, the blue "Fan" LED turns on and the screen
   shows `VENTILATION`. At 32 °C the LED blinks red, the screen shows `VENT+COOL` and the buzzer sounds every two
   seconds. Back at 24.8 °C the container stays in WARNING (hysteresis); at 24 °C it is NORMAL and the fan stops.
-- Tags are typed in the serial monitor (one UID per line), since the Wokwi circuit has no RFID reader: `DE:AD:BE:EF` is
-  authorized (green LED for 2 s, `ACCESS GRANTED`, the servo opens for 10 seconds, and in CRITICAL the alarm is
-  acknowledged); any other UID is denied (3 red flashes, `ACCESS DENIED`).
+- Click the MFRC522 reader, choose a card and press `TAP`. The Blue Card has the authorized UID `DE:AD:BE:EF` (set in
+  `diagram.json`): green LED for 2 s, `ACCESS GRANTED`, the servo opens for 10 seconds, and in CRITICAL the alarm is
+  acknowledged. The other cards keep the UIDs of Wokwi and are denied (3 red flashes, `ACCESS DENIED`). UIDs can
+  also be typed in the serial monitor, one per line.
 - Move the slider of the BH1750 to 300 lux: the luminosity reaches WARNING about 5 seconds later, when the average of
   its last 10 samples passes 200 lux.
 - The simulator reaches the internet through `Wokwi-GUEST` but not a local network, so the requests to the Edge fail
