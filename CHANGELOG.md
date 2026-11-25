@@ -20,6 +20,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- The node runs on the Modest IoT Nano Framework 1.3.0 instead of 1.0.0; 1.3.0 compiles on the ESP32 cores 3.x and
+  4.x. The Edge records write their fields with `write(TelemetryWriter&)` and are sent with a `JsonTelemetryWriter`,
+  still without the envelope of the framework; numbers now carry two decimals. ArduinoJson, which the framework no
+  longer brings, is included to read the configuration of the Edge, and the rule of the profile is `ProfileRule`,
+  since the framework has its own `Rule`. `libraries.txt` pins `Modest-IoT-Nano-Framework@1.3.0`, because Wokwi may
+  still resolve the bare name to 1.2.1, which does not compile on its core 3.3.12 (#8).
 - `diagram.json` moves from `ContainerMonitor/` to the root of the repository, next to `wokwi.toml`, with the same
   content, so the Wokwi extension and plugin find it. The published Wokwi project is not affected.
 - The README fixes the ESP32 core to 3.3.13 and compiles with `--output-dir ContainerMonitor/build`: the
