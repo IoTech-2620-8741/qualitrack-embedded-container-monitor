@@ -24,16 +24,18 @@
  * | US74 | The local alarm is acknowledged with an authorized tag |
  *
  * The sketch takes from the framework the `DigitalLightIntensitySensor`, `RfidSensor`, `ServoMotor`, `RgbLed`,
- * `Buzzer`, `WiFiConnectivityDriver`, `TimeSynchronizationDriver` and `HttpGatewayClient`, and writes what the
- * framework asks an application to write: the telemetry packages of the Edge and the device that reacts to the events.
- * Two classes of the framework v1.0.0 do not work and cannot be fixed by a subclass (see the README): the `DhtSensor`
+ * `Buzzer`, `RulesEngine`, `WiFiConnectivityDriver`, `TimeSynchronizationDriver` and `HttpGatewayClient`, and writes
+ * what the framework asks an application to write: the telemetry packages of the Edge and the device that reacts to the
+ * events. As in the SmartFactoryAlarm example of the framework, the device handles an event for each level of the fan
+ * and the `RulesEngine` sends the commands of that event, to the fan and to the servo that shows its speed.
+ * Two classes of the framework v1.3.0 do not work and cannot be fixed by a subclass (see the README): the `DhtSensor`
  * never reads the DHT22 in Wokwi and the `OledDisplay` draws only the top 16 rows. So the sketch also writes
  * `ClimateSensor`, a `Sensor` of the framework for the DHT, and `OledScreen`, an `Actuator` of the framework for the
  * OLED. The `RelayActuator` of the framework only switches its pin fully on or off, so the sketch writes `PwmFan`, an
  * `Actuator` of the framework that also sets the speed of the fan, and nothing else.
  *
- * Requirements: ESP32 core 3.x and the library Modest-IoT-Nano-Framework 1.0.0 (Arduino Library Manager, with
- * ArduinoJson and MQTT). Copy secrets.example.h as secrets.h with the values of the node.
+ * Requirements: ESP32 core 3.x and the libraries Modest-IoT-Nano-Framework 1.3.0 (Arduino Library Manager, with MQTT)
+ * and ArduinoJson 7. Copy secrets.example.h as secrets.h with the values of the node.
  *
  * Circuit of report section 5.6:
  *
@@ -44,10 +46,12 @@
  * | DHT22 data | GPIO 15 |
  * | SG90 servo signal | GPIO 13 |
  * | 2N2222 base of the fan (1 kΩ), 1N4007 diode across the fan | GPIO 26 |
+ * | SG90 servo signal of the fan gauge | GPIO 32 |
  * | RGB LED red / green / blue (200 Ω each, common cathode) | GPIO 4 / 16 / 17 |
  * | Buzzer | GPIO 25 |
  */
 #include <ModestIoT.h>
+#include <ArduinoJson.h>
 #include <HTTPClient.h>
 #include <WiFiClient.h>
 #include <Wire.h>
@@ -75,6 +79,7 @@ static constexpr int TAG_READER_SELECT_PIN = 5;
 static constexpr int TAG_READER_RESET_PIN = 2;
 static constexpr int LOCK_SERVO_PIN = 13;
 static constexpr int FAN_PIN = 26; // Not GPIO 12: it sets the flash voltage at boot.
+static constexpr int FAN_GAUGE_SERVO_PIN = 32;
 static constexpr int LED_RED_PIN = 4;
 static constexpr int LED_GREEN_PIN = 16;
 static constexpr int LED_BLUE_PIN = 17;
@@ -173,8 +178,12 @@ private:
     }
 };
 
-/** @brief Action a container starts while a metric is in a state or worse (a WARNING rule keeps acting on CRITICAL). */
-struct Rule {
+/**
+ * @brief Action a container starts while a metric is in a state or worse (a WARNING rule keeps acting on CRITICAL).
+ *
+ * It is not the `Rule` of the framework, the one of its `RulesEngine`.
+ */
+struct ActuationRule {
     Metric metric;
     State state;
     Action action;
@@ -185,7 +194,7 @@ struct Profile {
     static constexpr size_t MAXIMUM_RULE_COUNT = 12;
 
     Threshold thresholds[METRIC_COUNT];
-    Rule rules[MAXIMUM_RULE_COUNT]{};
+    ActuationRule rules[MAXIMUM_RULE_COUNT]{};
     size_t ruleCount = 0;
     uint32_t version = 0; // 0 = default profile of the node, until the Edge hands one.
 
@@ -200,7 +209,7 @@ struct Profile {
         return profile;
     }
 
-    bool addRule(const Rule& rule) {
+    bool addRule(const ActuationRule& rule) {
         if (ruleCount >= MAXIMUM_RULE_COUNT || rule.state == State::Normal) return false;
         if (!thresholds[static_cast<int>(rule.metric)].isDefined()) return false;
         rules[ruleCount++] = rule;
@@ -222,15 +231,15 @@ public:
 protected:
     EdgeRecord(uint32_t observedAt, uint32_t profileVersion) : observedAt(observedAt), profileVersion(profileVersion) {}
 
-    void serializeCommon(JsonDocument& json, const char* timeKey) const {
+    void writeCommon(TelemetryWriter& writer, const char* timeKey) const {
         char isoTime[21];
         const time_t seconds = observedAt;
         tm utc{};
         gmtime_r(&seconds, &utc);
         strftime(isoTime, sizeof(isoTime), "%Y-%m-%dT%H:%M:%SZ", &utc);
-        json["device_id"] = DEVICE_ID;
-        json[timeKey] = isoTime; // A char array is copied into the document.
-        if (profileVersion != 0) json["profile_version"] = profileVersion;
+        writer.field("device_id", DEVICE_ID);
+        writer.field(timeKey, static_cast<const char*>(isoTime));
+        if (profileVersion != 0) writer.field("profile_version", static_cast<int32_t>(profileVersion));
     }
 
 private:
@@ -258,13 +267,13 @@ public:
 
     bool isActuationEvent() const override { return false; }
 
-    void serialize(JsonDocument& json) const override {
-        serializeCommon(json, "measured_at");
+    void write(TelemetryWriter& writer) const override {
+        writeCommon(writer, "measured_at");
         static const char* const KEYS[] = {"temperature", "humidity", "luminosity"};
         for (size_t i = 0; i < METRIC_COUNT; i++) {
-            if (!std::isnan(values[i])) json[KEYS[i]] = roundf(values[i] * 10.0f) / 10.0f;
+            if (!std::isnan(values[i])) writer.field(KEYS[i], roundf(values[i] * 10.0f) / 10.0f);
         }
-        if (tag[0] != '\0') json["rfid_tag"] = static_cast<const char*>(tag);
+        if (tag[0] != '\0') writer.field("rfid_tag", static_cast<const char*>(tag));
     }
 
 private:
@@ -285,14 +294,14 @@ public:
 
     bool isActuationEvent() const override { return true; }
 
-    void serialize(JsonDocument& json) const override {
-        json["action"] = Names::of(action, on);
+    void write(TelemetryWriter& writer) const override {
+        writer.field("action", Names::of(action, on));
         if (hasCause) { // The Edge takes both trigger fields or neither.
-            json["trigger_metric"] = Names::of(metric);
-            json["trigger_state"] = Names::of(state);
+            writer.field("trigger_metric", Names::of(metric));
+            writer.field("trigger_state", Names::of(state));
         }
-        json["result"] = executed ? "EXECUTED" : "FAILED";
-        serializeCommon(json, "occurred_at");
+        writer.field("result", executed ? "EXECUTED" : "FAILED");
+        writeCommon(writer, "occurred_at");
     }
 
 private:
@@ -531,13 +540,22 @@ private:
  *
  * The `RelayActuator` of the framework only turns its pin fully on or off, so ventilation and cooling would run the fan
  * the same. This `Actuator` of the framework also sets its speed: `SET_SPEED_COMMAND` carries a percentage (0 stops
- * it). A stopped fan starts at full speed for half a second, since a small fan may not start at half speed; the device
- * calls `update()` often to end that start.
+ * it), and like the `RelayActuator` it offers prebuilt commands, which the `RulesEngine` sends. A stopped fan starts at
+ * full speed for half a second, since a small fan may not start at half speed; the device calls `update()` often to end
+ * that start.
  */
 class PwmFan : public Actuator {
 public:
     static constexpr int SET_SPEED_COMMAND_IDENTIFIER = 3100;
+    static constexpr uint8_t HALF_SPEED = 50;
     static constexpr uint8_t FULL_SPEED = 100;
+
+    /** @brief Prebuilt command that stops the fan. */
+    static constexpr Command STOP_COMMAND{SET_SPEED_COMMAND_IDENTIFIER, 0};
+    /** @brief Prebuilt command that runs the fan at half speed (ventilation). */
+    static constexpr Command HALF_SPEED_COMMAND{SET_SPEED_COMMAND_IDENTIFIER, HALF_SPEED};
+    /** @brief Prebuilt command that runs the fan at full speed (simulated cooling). */
+    static constexpr Command FULL_SPEED_COMMAND{SET_SPEED_COMMAND_IDENTIFIER, FULL_SPEED};
 
     explicit PwmFan(int signalGpioPin, CommandHandler* parentHandler = nullptr)
         : Actuator(signalGpioPin, parentHandler) {}
@@ -602,6 +620,7 @@ public:
           tagReader(TAG_READER_SELECT_PIN, TAG_READER_RESET_PIN, this),
           lockServo(LOCK_SERVO_PIN, LOCK_CLOSED_ANGLE, this),
           fan(FAN_PIN, this),
+          fanGauge(FAN_GAUGE_SERVO_PIN, GAUGE_STOPPED_ANGLE, this),
           statusLed(LED_RED_PIN, LED_GREEN_PIN, LED_BLUE_PIN, false, this),
           alarmBuzzer(BUZZER_PIN, this),
           screen(SCREEN_I2C_ADDRESS, this),
@@ -616,6 +635,7 @@ public:
 
         if (!screen.initialize()) Serial.println("[ContainerMonitor] OLED not found at 0x3C");
         if (!fan.initialize()) Serial.printf("[ContainerMonitor] No PWM channel for the fan on GPIO %d\n", FAN_PIN);
+        registerFanRules();
         climateSensor.setFaultThreshold(SENSOR_FAULT_THRESHOLD);
         lightSensor.setFaultThreshold(SENSOR_FAULT_THRESHOLD);
         animateLed(millis());
@@ -642,7 +662,10 @@ public:
                       static_cast<unsigned>(sizeof(AUTHORIZED_TAGS) / sizeof(AUTHORIZED_TAGS[0])));
     }
 
-    ~ContainerMonitor() override { stopAsynchronousEngine(); }
+    ~ContainerMonitor() override {
+        stopAsynchronousEngine();
+        fanRules.cleanupRules();
+    }
 
     /** @runs_on{sampler} */
     void on(Event event) override {
@@ -656,6 +679,9 @@ public:
             case ALARM_REPEAT_EVENT:
                 if (overall == State::Critical && !alarmAcknowledged) playTone(2000, 500);
                 break;
+            case FAN_STOP_EVENT:
+            case FAN_VENTILATION_EVENT:
+            case FAN_COOLING_EVENT: fanRules.on(event); break;
             case RfidSensor::TAG_DETECTED_EVENT_IDENTIFIER: onTag(tagReader.getUid()); break;
             case Sensor::SENSOR_FAULT_EVENT_IDENTIFIER: onSensorFault(event.sourceId, true); break;
             case Sensor::SENSOR_RECOVERED_EVENT_IDENTIFIER: onSensorFault(event.sourceId, false); break;
@@ -698,10 +724,14 @@ protected:
     void processQueuedTelemetryData(const TelemetryPackage* package) const override {
         if (package == nullptr) return;
         const auto* record = static_cast<const EdgeRecord*>(package); // Every package of this node is an EdgeRecord.
-        JsonDocument json;
-        record->serialize(json);
-        char body[320];
-        serializeJson(json, body, sizeof(body));
+        JsonTelemetryWriter writer; // Written without the envelope of the framework, which the Edge rejects.
+        record->write(writer);
+        writer.finalize();
+        if (writer.hasOverflow()) {
+            Serial.println("[ContainerMonitor] Record longer than the buffer of the framework");
+            return;
+        }
+        const char* body = writer.getString();
         // The client keeps the pointer to the URL, so each route has its own buffer.
         edge.setServiceEndpointUrl(record->isActuationEvent() ? actuationEventsUrl : readingsUrl);
         if (edge.sendRequest(HttpGatewayClient::HttpMethod::Post, body)) {
@@ -736,11 +766,13 @@ private:
     // so these "angles" are the pulses of the latch: 5 gives about 0.55 ms (closed, about 4 degrees) and 13 about 1.44 ms
     // (open, about 89 degrees).
     static constexpr int LOCK_CLOSED_ANGLE = 5, LOCK_OPEN_ANGLE = 13;
+    // The servo of the fan gauge takes the same units: 5, 13 and 21 are equally spaced (about 4, 89 and 173 degrees).
+    static constexpr int GAUGE_STOPPED_ANGLE = 5, GAUGE_HALF_SPEED_ANGLE = 13, GAUGE_FULL_SPEED_ANGLE = 21;
     static constexpr unsigned long OPENING_DURATION = 10000;  // Lock open after an authorized tag.
-    static constexpr uint8_t VENTILATION_SPEED = 50;          // Fan speed of the ventilation, in percent.
     static constexpr unsigned long REVIEW_TIMEOUT = 300000;   // Without the Edge, the node needs review.
     static constexpr unsigned long RETRY_INTERVAL = 30000;
     static constexpr int EVALUATE_EVENT = 1000, ANIMATE_EVENT = 1001, REPORT_EVENT = 1002, ALARM_REPEAT_EVENT = 1003;
+    static constexpr int FAN_STOP_EVENT = 1010, FAN_VENTILATION_EVENT = 1011, FAN_COOLING_EVENT = 1012;
     static constexpr int BEGIN_PROFILE = 2000, SET_LIMIT = 2001, ADD_RULE = 2013, APPLY_PROFILE = 2014;
     static constexpr int32_t NO_LIMIT = INT32_MIN;
     static constexpr uint8_t CLIMATE_SENSOR_MODEL = ClimateSensor::MODEL_DHT22; // MODEL_DHT11 for a DHT11.
@@ -756,6 +788,8 @@ private:
     RfidSensor tagReader;
     ServoMotor lockServo;
     PwmFan fan;
+    ServoMotor fanGauge;
+    RulesEngine fanRules;
     RgbLed statusLed;
     Buzzer alarmBuzzer;
     OledScreen screen;
@@ -852,7 +886,7 @@ private:
         bool wanted[ACTION_COUNT] = {false, false, false};
         Metric cause[ACTION_COUNT] = {Metric::Temperature, Metric::Temperature, Metric::Temperature};
         for (size_t r = 0; r < profile.ruleCount; r++) {
-            const Rule& rule = profile.rules[r];
+            const ActuationRule& rule = profile.rules[r];
             const int action = static_cast<int>(rule.action);
             if (!wanted[action] && states[static_cast<int>(rule.metric)] >= rule.state) {
                 wanted[action] = true;
@@ -873,16 +907,32 @@ private:
             updateLock(true, metric);
             return;
         }
-        // Ventilation and simulated cooling share the fan of the container: cooling runs it at full speed.
-        const uint8_t speed = actionOn[static_cast<int>(Action::Cooling)]       ? PwmFan::FULL_SPEED
-                              : actionOn[static_cast<int>(Action::Ventilation)] ? VENTILATION_SPEED
-                                                                                : 0;
-        fan.handle(Command{PwmFan::SET_SPEED_COMMAND_IDENTIFIER, speed});
+        // Ventilation and simulated cooling share the fan of the container; the rules of the fan set its speed.
+        this->on(Event(actionOn[static_cast<int>(Action::Cooling)]       ? FAN_COOLING_EVENT
+                       : actionOn[static_cast<int>(Action::Ventilation)] ? FAN_VENTILATION_EVENT
+                                                                         : FAN_STOP_EVENT));
         const bool executed = fan.isApplied();
-        Serial.printf("[ContainerMonitor] %s (%s %s), fan at %u%%%s\n", Names::of(action, on), Names::of(metric),
-                      Names::of(states[static_cast<int>(metric)]), static_cast<unsigned>(speed),
+        Serial.printf("[ContainerMonitor] %s (%s %s), fan at %d%%%s\n", Names::of(action, on), Names::of(metric),
+                      Names::of(states[static_cast<int>(metric)]), static_cast<int>(fan.getSpeedInPercentage()),
                       executed ? "" : " FAILED");
         sendAction(action, on, true, metric, executed);
+    }
+
+    /**
+     * @brief One rule per event of the fan: its speed and the position of the gauge that shows it. The rules of the
+     * profile decide the event; these only send its commands.
+     */
+    void registerFanRules() {
+        const bool registered = addFanRule(FAN_STOP_EVENT, PwmFan::STOP_COMMAND, GAUGE_STOPPED_ANGLE)
+                                && addFanRule(FAN_VENTILATION_EVENT, PwmFan::HALF_SPEED_COMMAND, GAUGE_HALF_SPEED_ANGLE)
+                                && addFanRule(FAN_COOLING_EVENT, PwmFan::FULL_SPEED_COMMAND, GAUGE_FULL_SPEED_ANGLE);
+        if (!registered) Serial.println("[ContainerMonitor] The rules of the fan could not be registered");
+    }
+
+    bool addFanRule(int eventIdentifier, const Command& speed, int gaugeAngle) {
+        return fanRules.addRule(eventIdentifier, &fan, speed.identifier, speed.payload)
+               && fanRules.addActionToRule(eventIdentifier, &fanGauge, ServoMotor::DRIVE_TO_ANGLE_COMMAND_IDENTIFIER,
+                                           gaugeAngle);
     }
 
     void updateLock(bool causedByRule, Metric metric) {
@@ -950,7 +1000,8 @@ private:
                 serialTag[serialTagLength] = '\0';
                 serialTagLength = 0;
                 onTag(serialTag);
-            } else if (character > ' ' && serialTagLength < sizeof(serialTag) - 1) {
+            } else if (character > ' ' && character != '"' && character != '\\' && serialTagLength < sizeof(serialTag) - 1) {
+                // The JSON writer of the framework does not escape quotes or backslashes, and no UID has them.
                 serialTag[serialTagLength++] = static_cast<char>(toupper(character));
             }
         }
@@ -1237,7 +1288,7 @@ private:
             }
         }
         for (size_t r = 0; queued && r < edgeProfile.ruleCount; r++) {
-            const Rule& rule = edgeProfile.rules[r];
+            const ActuationRule& rule = edgeProfile.rules[r];
             const int32_t payload = static_cast<int32_t>(rule.metric) | static_cast<int32_t>(rule.state) << 8 |
                                     static_cast<int32_t>(rule.action) << 16;
             queued = device->enqueueCommand(device, Command{ADD_RULE, payload});

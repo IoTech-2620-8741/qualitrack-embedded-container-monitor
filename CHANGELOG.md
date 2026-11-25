@@ -7,8 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- A servo on GPIO 32, the fan gauge, shows the speed of the fan: about 4° when it is stopped, 89° at half speed and
+  173° at full speed. In Wokwi it takes the place of the "Fan" LED (MS10).
+
 ### Changed
 
+- The node is built on the Modest IoT Nano Framework v1.3.0: its telemetry packages write to the `TelemetryWriter` of
+  the framework, and ArduinoJson, which the framework no longer brings, is a library of the sketch.
+- The `RulesEngine` of the framework sends the commands of the fan and of its gauge for each event of the fan (stop,
+  ventilation and cooling), as in the SmartFactoryAlarm example of the framework (MS10).
 - The fan runs with PWM through the new `PwmFan`, an `Actuator` of the framework, in place of the `RelayActuator`:
   ventilation at half speed and simulated cooling at full speed, and a stopped fan starts at full speed for half a
   second (MS10).
