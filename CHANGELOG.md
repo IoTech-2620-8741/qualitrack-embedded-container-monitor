@@ -11,7 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 The node reads the RFID tags in Wokwi, drives the fan with PWM and shows its speed on a gauge servo, and runs on the
 Modest IoT Nano Framework 1.3.0. The readings, the actions, the sign-in and the profile read from the Edge API keep
-their format, so the major version does not change.
+their fields and types, so the major version does not change.
 
 ### Added
 
