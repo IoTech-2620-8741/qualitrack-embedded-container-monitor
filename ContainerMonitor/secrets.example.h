@@ -38,7 +38,7 @@ static constexpr const char* AUTHORIZED_TAGS[] = {
     "A1:B2:C3:D4"
 };
 
-/// Also read tags typed on the serial monitor (one UID per line): the Wokwi circuit has no RC522.
+/// Also read tags typed on the serial monitor (one UID per line), besides the RC522: in Wokwi any UID can be tried.
 static constexpr bool SERIAL_TAG_INPUT = true;
 
 #endif // CONTAINER_MONITOR_SECRETS_H
