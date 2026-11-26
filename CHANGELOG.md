@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- A servo on GPIO 32, the fan gauge, shows the speed of the fan: about 4° when it is stopped, 89° at half speed and
+  173° at full speed. In Wokwi it takes the place of the "Fan" LED (MS10).
 - Local simulation in Wokwi from VS Code or CLion: `wokwi.toml` with the firmware built by arduino-cli in
   `ContainerMonitor/build` and the custom BH1750 chip, and the compiled chip `wokwi/bh1750.chip.wasm` with its API
   header `wokwi/wokwi-api.h`.
@@ -30,6 +32,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   content, so the Wokwi extension and plugin find it. The published Wokwi project is not affected.
 - The README fixes the ESP32 core to 3.3.13 and compiles with `--output-dir ContainerMonitor/build`: the
   core 4.0.0 does not compile the framework v1.0.0 (`BLEDevice.h` not found).
+- The `RulesEngine` of the framework sends the commands of the fan and of its gauge for each event of the fan (stop,
+  ventilation and cooling), as in the SmartFactoryAlarm example of the framework (MS10).
+- The fan runs with PWM through the new `PwmFan`, an `Actuator` of the framework, in place of the `RelayActuator`:
+  ventilation at half speed and simulated cooling at full speed, and a stopped fan starts at full speed for half a
+  second (MS10).
+- A fan action is reported as `EXECUTED` when the PWM output took the new speed, instead of reading the level of the
+  pin (MS13).
+- The fan is on GPIO 26 instead of GPIO 12, a strapping pin that sets the voltage of the flash at boot; the hardware
+  table adds the 1N4007 diode across the fan.
 
 ## [1.0.0] - 2026-11-15
 
