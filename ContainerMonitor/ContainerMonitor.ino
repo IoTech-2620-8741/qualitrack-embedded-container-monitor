@@ -28,14 +28,15 @@
  * what the framework asks an application to write: the telemetry packages of the Edge and the device that reacts to the
  * events. As in the SmartFactoryAlarm example of the framework, the device handles an event for each level of the fan
  * and the `RulesEngine` sends the commands of that event, to the fan and to the servo that shows its speed.
- * Two classes of the framework v1.3.0 do not work and cannot be fixed by a subclass (see the README): the `DhtSensor`
- * never reads the DHT22 in Wokwi and the `OledDisplay` draws only the top 16 rows. So the sketch also writes
+ * Two classes of the framework do not work and cannot be fixed by a subclass (see the README): the `DhtSensor` never
+ * reads the DHT22 in Wokwi and the `OledDisplay` draws only the top 16 rows. So the sketch also writes
  * `ClimateSensor`, a `Sensor` of the framework for the DHT, and `OledScreen`, an `Actuator` of the framework for the
  * OLED. The `RelayActuator` of the framework only switches its pin fully on or off, so the sketch writes `PwmFan`, an
  * `Actuator` of the framework that also sets the speed of the fan, and nothing else.
  *
- * Requirements: ESP32 core 3.x and the libraries Modest-IoT-Nano-Framework 1.3.0 (Arduino Library Manager, with MQTT)
- * and ArduinoJson 7. Copy secrets.example.h as secrets.h with the values of the node.
+ * Requirements: ESP32 core 3.x or 4.x, and the libraries Modest-IoT-Nano-Framework 1.3.0 (Arduino Library Manager,
+ * with MQTT) and ArduinoJson 7, which reads the configuration of the Edge. Copy secrets.example.h as secrets.h with the
+ * values of the node.
  *
  * Circuit of report section 5.6:
  *
@@ -51,7 +52,7 @@
  * | Buzzer | GPIO 25 |
  */
 #include <ModestIoT.h>
-#include <ArduinoJson.h>
+#include <ArduinoJson.h> // The framework writes the telemetry; ArduinoJson reads the configuration.
 #include <HTTPClient.h>
 #include <WiFiClient.h>
 #include <Wire.h>
@@ -178,12 +179,8 @@ private:
     }
 };
 
-/**
- * @brief Action a container starts while a metric is in a state or worse (a WARNING rule keeps acting on CRITICAL).
- *
- * It is not the `Rule` of the framework, the one of its `RulesEngine`.
- */
-struct ActuationRule {
+/** @brief Action a container starts while a metric is in a state or worse (a WARNING rule keeps acting on CRITICAL). */
+struct ProfileRule {
     Metric metric;
     State state;
     Action action;
@@ -194,7 +191,7 @@ struct Profile {
     static constexpr size_t MAXIMUM_RULE_COUNT = 12;
 
     Threshold thresholds[METRIC_COUNT];
-    ActuationRule rules[MAXIMUM_RULE_COUNT]{};
+    ProfileRule rules[MAXIMUM_RULE_COUNT]{};
     size_t ruleCount = 0;
     uint32_t version = 0; // 0 = default profile of the node, until the Edge hands one.
 
@@ -209,7 +206,7 @@ struct Profile {
         return profile;
     }
 
-    bool addRule(const ActuationRule& rule) {
+    bool addRule(const ProfileRule& rule) {
         if (ruleCount >= MAXIMUM_RULE_COUNT || rule.state == State::Normal) return false;
         if (!thresholds[static_cast<int>(rule.metric)].isDefined()) return false;
         rules[ruleCount++] = rule;
@@ -238,7 +235,7 @@ protected:
         gmtime_r(&seconds, &utc);
         strftime(isoTime, sizeof(isoTime), "%Y-%m-%dT%H:%M:%SZ", &utc);
         writer.field("device_id", DEVICE_ID);
-        writer.field(timeKey, static_cast<const char*>(isoTime));
+        writer.field(timeKey, isoTime); // The writer copies the text into its buffer.
         if (profileVersion != 0) writer.field("profile_version", static_cast<int32_t>(profileVersion));
     }
 
@@ -724,7 +721,8 @@ protected:
     void processQueuedTelemetryData(const TelemetryPackage* package) const override {
         if (package == nullptr) return;
         const auto* record = static_cast<const EdgeRecord*>(package); // Every package of this node is an EdgeRecord.
-        JsonTelemetryWriter writer; // Written without the envelope of the framework, which the Edge rejects.
+        // Only the fields of the record: serializeToBuffer() would add the envelope of the framework.
+        JsonTelemetryWriter writer;
         record->write(writer);
         writer.finalize();
         if (writer.hasOverflow()) {
@@ -886,7 +884,7 @@ private:
         bool wanted[ACTION_COUNT] = {false, false, false};
         Metric cause[ACTION_COUNT] = {Metric::Temperature, Metric::Temperature, Metric::Temperature};
         for (size_t r = 0; r < profile.ruleCount; r++) {
-            const ActuationRule& rule = profile.rules[r];
+            const ProfileRule& rule = profile.rules[r];
             const int action = static_cast<int>(rule.action);
             if (!wanted[action] && states[static_cast<int>(rule.metric)] >= rule.state) {
                 wanted[action] = true;
@@ -991,7 +989,7 @@ private:
         refreshScreen(now);
     }
 
-    /** @brief Reads the UIDs typed on the serial monitor, one per line (Wokwi has no RC522 in this circuit). */
+    /** @brief Reads the UIDs typed on the serial monitor, one per line, besides the RC522 (any UID in Wokwi). */
     void readSerialTag() {
         while (Serial.available() > 0) {
             const int character = Serial.read();
@@ -1288,7 +1286,7 @@ private:
             }
         }
         for (size_t r = 0; queued && r < edgeProfile.ruleCount; r++) {
-            const ActuationRule& rule = edgeProfile.rules[r];
+            const ProfileRule& rule = edgeProfile.rules[r];
             const int32_t payload = static_cast<int32_t>(rule.metric) | static_cast<int32_t>(rule.state) << 8 |
                                     static_cast<int32_t>(rule.action) << 16;
             queued = device->enqueueCommand(device, Command{ADD_RULE, payload});

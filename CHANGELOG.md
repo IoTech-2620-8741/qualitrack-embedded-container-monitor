@@ -11,11 +11,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - A servo on GPIO 32, the fan gauge, shows the speed of the fan: about 4° when it is stopped, 89° at half speed and
   173° at full speed. In Wokwi it takes the place of the "Fan" LED (MS10).
+- Local simulation in Wokwi from VS Code or CLion: `wokwi.toml` with the firmware built by arduino-cli in
+  `ContainerMonitor/build` and the custom BH1750 chip, and the compiled chip `wokwi/bh1750.chip.wasm` with its API
+  header `wokwi/wokwi-api.h`.
+- A "Simulate locally" section in the README, with the build, the license, the simulation and how to rebuild the chip.
+- The Wokwi circuit has the MFRC522 RFID reader on the SPI bus (SDA GPIO 5, RST GPIO 2), which the `RfidSensor` of the
+  framework reads: the Blue Card has the authorized UID `DE:AD:BE:EF`, the other cards are denied, and UIDs can still
+  be typed in the serial monitor. The lock keeps the `ServoMotor` of the framework and the servo is powered from VIN
+  (#6, #7).
 
 ### Changed
 
-- The node is built on the Modest IoT Nano Framework v1.3.0: its telemetry packages write to the `TelemetryWriter` of
-  the framework, and ArduinoJson, which the framework no longer brings, is a library of the sketch.
+- The node runs on the Modest IoT Nano Framework 1.3.0 instead of 1.0.0; 1.3.0 compiles on the ESP32 cores 3.x and
+  4.x. The Edge records write their fields with `write(TelemetryWriter&)` and are sent with a `JsonTelemetryWriter`,
+  still without the envelope of the framework; numbers now carry two decimals. ArduinoJson, which the framework no
+  longer brings, is included to read the configuration of the Edge, and the rule of the profile is `ProfileRule`,
+  since the framework has its own `Rule`. `libraries.txt` pins `Modest-IoT-Nano-Framework@1.3.0`, because Wokwi may
+  still resolve the bare name to 1.2.1, which does not compile on its core 3.3.12 (#8).
+- `diagram.json` moves from `ContainerMonitor/` to the root of the repository, next to `wokwi.toml`, with the same
+  content, so the Wokwi extension and plugin find it. The published Wokwi project is not affected.
+- The README fixes the ESP32 core to 3.3.13 and compiles with `--output-dir ContainerMonitor/build`: the
+  core 4.0.0 does not compile the framework v1.0.0 (`BLEDevice.h` not found).
 - The `RulesEngine` of the framework sends the commands of the fan and of its gauge for each event of the fan (stop,
   ventilation and cooling), as in the SmartFactoryAlarm example of the framework (MS10).
 - The fan runs with PWM through the new `PwmFan`, an `Actuator` of the framework, in place of the `RelayActuator`:

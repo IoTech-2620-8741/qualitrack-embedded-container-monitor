@@ -1,0 +1,115 @@
+{
+  "version": 1,
+  "author": "IoTech - QualiTrack",
+  "editor": "wokwi",
+  "parts": [
+    { "type": "wokwi-esp32-devkit-v1", "id": "esp", "top": 0, "left": 0, "attrs": {} },
+    {
+      "type": "board-ssd1306",
+      "id": "oled",
+      "top": -110,
+      "left": 160,
+      "attrs": { "i2cAddress": "0x3c" }
+    },
+    { "type": "chip-bh1750", "id": "lux", "top": -110, "left": 330, "attrs": { "lux": "120" } },
+    {
+      "type": "wokwi-dht22",
+      "id": "dht",
+      "top": 10,
+      "left": 300,
+      "attrs": { "temperature": "21.5", "humidity": "45" }
+    },
+    { "type": "wokwi-servo", "id": "servo", "top": 142, "left": 268.8, "attrs": {} },
+    {
+      "type": "wokwi-buzzer",
+      "id": "buzzer",
+      "top": 376.8,
+      "left": 174.6,
+      "attrs": { "volume": "0.2" }
+    },
+    {
+      "type": "wokwi-servo",
+      "id": "fan",
+      "top": 250,
+      "left": -220,
+      "attrs": { "horn": "single", "hornColor": "#2f80ed" }
+    },
+    { "type": "wokwi-text", "id": "fan-label", "top": 360, "left": -190, "attrs": { "text": "Fan speed" } },
+    {
+      "type": "wokwi-rgb-led",
+      "id": "rgb",
+      "top": 10,
+      "left": -165,
+      "attrs": { "common": "cathode" }
+    },
+    {
+      "type": "wokwi-resistor",
+      "id": "r-red",
+      "top": 100,
+      "left": -205,
+      "rotate": 90,
+      "attrs": { "value": "200" }
+    },
+    {
+      "type": "wokwi-resistor",
+      "id": "r-green",
+      "top": 100,
+      "left": -165,
+      "rotate": 90,
+      "attrs": { "value": "200" }
+    },
+    {
+      "type": "wokwi-resistor",
+      "id": "r-blue",
+      "top": 100,
+      "left": -125,
+      "rotate": 90,
+      "attrs": { "value": "200" }
+    },
+    {
+      "type": "board-mfrc522",
+      "id": "rfid",
+      "top": 227.75,
+      "left": 483.44,
+      "attrs": { "uid": "DE:AD:BE:EF" }
+    }
+  ],
+  "connections": [
+    [ "esp:TX0", "$serialMonitor:RX", "", [] ],
+    [ "esp:RX0", "$serialMonitor:TX", "", [] ],
+    [ "oled:VCC", "esp:3V3", "red", [] ],
+    [ "oled:GND", "esp:GND.1", "black", [] ],
+    [ "oled:SDA", "esp:D21", "blue", [] ],
+    [ "oled:SCL", "esp:D22", "yellow", [] ],
+    [ "lux:VCC", "esp:3V3", "red", [] ],
+    [ "lux:GND", "esp:GND.1", "black", [] ],
+    [ "lux:SDA", "esp:D21", "blue", [] ],
+    [ "lux:SCL", "esp:D22", "yellow", [] ],
+    [ "dht:VCC", "esp:3V3", "red", [] ],
+    [ "dht:SDA", "esp:D15", "green", [] ],
+    [ "dht:GND", "esp:GND.1", "black", [] ],
+    [ "esp:VIN", "servo:V+", "red", [ "v0" ] ],
+    [ "servo:GND", "esp:GND.1", "black", [] ],
+    [ "servo:PWM", "esp:D13", "orange", [] ],
+    [ "buzzer:2", "esp:D25", "green", [] ],
+    [ "buzzer:1", "esp:GND.2", "black", [] ],
+    [ "fan:V+", "esp:VIN", "red", [] ],
+    [ "fan:GND", "esp:GND.2", "black", [] ],
+    [ "fan:PWM", "esp:D32", "cyan", [] ],
+    [ "rgb:R", "r-red:1", "red", [] ],
+    [ "r-red:2", "esp:D4", "red", [] ],
+    [ "rgb:G", "r-green:1", "green", [] ],
+    [ "r-green:2", "esp:RX2", "green", [] ],
+    [ "rgb:B", "r-blue:1", "blue", [] ],
+    [ "r-blue:2", "esp:TX2", "blue", [] ],
+    [ "rgb:COM", "esp:GND.2", "black", [] ],
+    [ "rfid:SDA", "esp:D5", "green", [] ],
+    [ "rfid:SCK", "esp:D18", "green", [] ],
+    [ "rfid:MOSI", "esp:D23", "green", [] ],
+    [ "rfid:MISO", "esp:D19", "green", [] ],
+    [ "rfid:RST", "esp:D2", "green", [] ],
+    [ "rfid:3.3V", "esp:3V3", "red", [] ],
+    [ "rfid:GND", "esp:GND.1", "black", [] ]
+  ],
+  "dependencies": {}
+}
