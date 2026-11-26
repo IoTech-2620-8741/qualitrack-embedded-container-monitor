@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-11-25
+
+The node reads the RFID tags in Wokwi, drives the fan with PWM and shows its speed on a gauge servo, and runs on the
+Modest IoT Nano Framework 1.3.0. The readings, the actions, the sign-in and the profile read from the Edge API keep
+their format, so the major version does not change.
+
 ### Added
 
 - A servo on GPIO 32, the fan gauge, shows the speed of the fan: about 4° when it is stopped, 89° at half speed and
