@@ -100,9 +100,9 @@ Circuit of report section 5.6 (Cirkit Designer). Cabinet of 450 × 450 × 600 mm
 | Buzzer | + / − | GPIO 25 / GND | Alarm and access denied sound |
 
 GPIO 2 and 15 are strapping pins of the ESP32: if the RC522 causes problems at boot, move it to a free pin such as
-GPIO 27 (report section 5.6) and change the pin constants at the top of `ContainerMonitor.ino`. The fan is on GPIO 26
-instead of the GPIO 12 of report section 5.6, because GPIO 12 sets the voltage of the flash at boot and a load on it
-can keep the board from starting.
+GPIO 27 (report section 5.6) and change the pin constants at the top of `ContainerMonitor.ino`. The fan is on GPIO 26,
+not on GPIO 12, because GPIO 12 sets the voltage of the flash at boot and a load on it can keep the board from
+starting.
 
 ## Firmware
 
@@ -124,11 +124,11 @@ lock and the alarm, animates the status LED and lays out the screen. The rest co
 `WiFiConnectivityDriver`, `TimeSynchronizationDriver` and `HttpGatewayClient`. Two classes of the framework do
 not work and cannot be fixed by a subclass (see the notes below), so the sketch also writes, on the extension points of
 the framework, `ClimateSensor` (a `Sensor`, in place of `DhtSensor`) and `OledScreen` (an `Actuator` with the drawing
-calls and the update command of `OledDisplay`). The `RelayActuator` of the framework only turns its pin fully on or off, so the
-sketch also writes `PwmFan` (an `Actuator` whose `SET_SPEED_COMMAND` carries the speed in percent, with prebuilt
-commands to stop it and to run it at half and full speed, as the `RelayActuator` has) for the fan. The profile read
-from the Edge on the network task reaches the sampler task through `enqueueCommand()`: one command starts it, one
-carries each limit or rule, and the last one applies it.
+calls and the update command of `OledDisplay`). The `RelayActuator` of the framework only turns its pin fully on or
+off, so the sketch also writes `PwmFan` (an `Actuator` whose `SET_SPEED_COMMAND` carries the speed in percent, with
+prebuilt commands to stop it and to run it at half and full speed, as the `RelayActuator` has) for the fan. The
+profile read from the Edge on the network task reaches the sampler task through `enqueueCommand()`: one command starts
+it, one carries each limit or rule, and the last one applies it.
 
 The fan follows the SmartFactoryAlarm example of the framework: the rules of the profile decide the level of the fan,
 the device handles an event for that level, and the `RulesEngine` sends the commands of the event.
@@ -174,8 +174,9 @@ Notes on the framework v1.3.0 (these classes keep the sources of v1.0.0). The fa
   the reader answered at boot.
 - `HttpGatewayClient::sendTelemetryRecord()` adds the `timestamp` and `sequence` of the framework, which the Edge
   rejects, so the node writes each record with the `JsonTelemetryWriter` and posts it with `sendRequest()`. The writer
-  does not escape the strings, so the node takes no quotes or backslashes in a tag typed on the serial monitor. The client sends only the `Authorization`
-  header, so the API key goes as a Bearer token, which the Edge accepts since v0.4.0 (its ADR-0018).
+  does not escape the strings, so the node takes no quotes or backslashes in a tag typed on the serial monitor. The
+  client sends only the `Authorization` header, so the API key goes as a Bearer token, which the Edge accepts since
+  v0.4.0 (its ADR-0018).
 - `HttpGatewayClient` keeps only 511 bytes of a response, and the configuration of a container (three thresholds and
   its rules) is longer, so the node reads it with the `HTTPClient` of the ESP32 core and the same Bearer token.
 - On the ESP32 the `MODEST_LOG_*` macros go to the ESP-IDF log, which prints nothing at the default debug level, so
