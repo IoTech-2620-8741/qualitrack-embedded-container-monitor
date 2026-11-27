@@ -15,7 +15,7 @@
  * | MS08 | OLED with the data, the lock, the action and the link with the Edge |
  * | MS09 | RFID tag of the person who opens the container (RC522) |
  * | MS10 | Ventilation and simulated cooling with the profile rules, with hysteresis: either one switches the fan on |
- * | MS11 | Lock opened for 10 seconds for an authorized tag |
+ * | MS11 | Lock opened by an authorized tag and closed by the same tag, or by itself after 2 minutes |
  * | MS12 | Climate sent when a state changes and every 30 seconds; every tag read is sent |
  * | MS13 | Every action sent with its cause and its result |
  * | MS14 | Sign-in with the identifier and the API key of the node |
@@ -689,7 +689,7 @@ private:
     // so these "angles" are the pulses of the latch: 5 gives about 0.55 ms (closed, about 4 degrees) and 13 about 1.44 ms
     // (open, about 89 degrees).
     static constexpr int LOCK_CLOSED_ANGLE = 5, LOCK_OPEN_ANGLE = 13;
-    static constexpr unsigned long OPENING_DURATION = 10000;  // Lock open after an authorized tag.
+    static constexpr unsigned long OPENING_TIMEOUT = 120000;  // A lock opened by a tag closes by itself after it.
     static constexpr unsigned long REVIEW_TIMEOUT = 300000;   // Without the Edge, the node needs review.
     static constexpr unsigned long RETRY_INTERVAL = 30000;
     static constexpr int EVALUATE_EVENT = 1000, ANIMATE_EVENT = 1001, REPORT_EVENT = 1002, ALARM_REPEAT_EVENT = 1003;
@@ -700,6 +700,7 @@ private:
     static constexpr uint8_t SCREEN_I2C_ADDRESS = 0x3C;
     static constexpr size_t LIGHT_AVERAGE_WINDOW = 10; // Light samples in the moving average (report 5.6).
     static constexpr size_t SCREEN_LINE_COUNT = 6, SCREEN_LINE_SIZE = 22; // 21 characters of 6 px, and the terminator.
+    static constexpr size_t TAG_SIZE = 32; // A UID of up to 10 bytes in hexadecimal with colons, and the terminator.
     static constexpr unsigned long ACCESS_MESSAGE_DURATION = 3000;    // Access result on the screen.
 
     enum class LedPattern { Normal, Warning, Critical, NeedsReview, Linking };
@@ -729,14 +730,14 @@ private:
     Metric actionCause[ACTION_COUNT] = {Metric::Temperature, Metric::Temperature, Metric::Temperature};
     bool lockOpen = false, openedByTag = false, alarmAcknowledged = false;
     unsigned long openedByTagAt = 0;
-    char openedByTagUid[SCREEN_LINE_SIZE]{};      
+    char openedByTagUid[TAG_SIZE]{}; // The tag that opened the lock, the only one that closes it.
     bool accessFeedback = false, accessOnScreen = false, accessGranted = false;
-    bool accessIsClosing = false;                 // true if the feedback is a closure on the same card
+    const char* accessResult = ""; // What the last tag did to the lock, for the screen.
     unsigned long accessFeedbackAt = 0;
     char accessTag[SCREEN_LINE_SIZE]{};
     bool ledDrawn = false, ledLit = false;
     RgbColor ledColor{0, 0, 0};
-    char serialTag[32]{};
+    char serialTag[TAG_SIZE]{};
     size_t serialTagLength = 0;
     float lightSamples[LIGHT_AVERAGE_WINDOW]{};
     size_t lightSampleCount = 0, nextLightSample = 0;
@@ -870,7 +871,16 @@ private:
 
     void animate() {
         if (SERIAL_TAG_INPUT) readSerialTag();
-        animateLed(millis());
+        // Read after the tags: a tag read above stores a later millis(), and the unsigned difference with an earlier
+        // one would end the opening at once.
+        const unsigned long now = millis();
+        if (openedByTag && now - openedByTagAt >= OPENING_TIMEOUT) {
+            openedByTag = false;
+            openedByTagUid[0] = '\0';
+            Serial.println("[ContainerMonitor] Opening time over");
+            updateLock(false, Metric::Temperature);
+        }
+        animateLed(now);
     }
 
     void onTag(const char* tag) {
@@ -886,29 +896,34 @@ private:
 
         accessFeedback = accessOnScreen = true;
         accessGranted = granted;
-        accessIsClosing = granted && openedByTag && strcasecmp(openedByTagUid, tag) == 0;
         snprintf(accessTag, sizeof(accessTag), "%s", tag);
         accessFeedbackAt = now;
-
-        if (granted && accessIsClosing) {
-            // The same card goes through again: lock the padlock now.
-            openedByTag = false;
-            openedByTagUid[0] = '\0';
-            Serial.printf("[ContainerMonitor] Same tag %s: closing the lock\n", tag);
-            playTone(600, 150);
-            updateLock(false, Metric::Temperature);
-        } else if (granted) {
+        if (!granted) {
+            accessResult = lockOpen ? "STAYS OPEN" : "STAYS LOCKED";
+            playTone(400, 800);
+        } else {
             if (overall == State::Critical && !alarmAcknowledged) {
                 alarmAcknowledged = true; // US74: the staff acknowledges the local alarm.
                 Serial.printf("[ContainerMonitor] Alarm acknowledged by %s\n", tag);
             }
-            playTone(2500, 120);
-            openedByTag = true;
-            openedByTagAt = now; // A new tag while open restarts the opening time.
-            snprintf(openedByTagUid, sizeof(openedByTagUid), "%s", tag);
+            const bool closing = openedByTag && strcasecmp(openedByTagUid, tag) == 0;
+            if (closing) {
+                openedByTag = false;
+                openedByTagUid[0] = '\0';
+                Serial.printf("[ContainerMonitor] Opening ended by %s\n", tag);
+            } else {
+                // Another tag keeps the lock open and restarts the opening time, but only the first one closes it.
+                if (!openedByTag) snprintf(openedByTagUid, sizeof(openedByTagUid), "%s", tag);
+                openedByTag = true;
+                openedByTagAt = now;
+            }
+            const bool wasOpen = lockOpen;
             updateLock(false, Metric::Temperature);
-        } else {
-            playTone(400, 800);
+            // A rule of the profile can keep the lock open after the tag that opened it closed it.
+            if (closing) accessResult = lockOpen ? "STAYS OPEN" : "CLOSING...";
+            else accessResult = wasOpen ? "STAYS OPEN" : "OPENING...";
+            if (closing && !lockOpen) playTone(600, 150);
+            else playTone(2500, 120);
         }
         animateLed(now);
         refreshScreen(now);
@@ -973,10 +988,7 @@ private:
     void refreshScreen(unsigned long now) {
         if (accessOnScreen && now - accessFeedbackAt >= ACCESS_MESSAGE_DURATION) accessOnScreen = false;
         if (accessOnScreen) {
-            const char* action = !accessGranted ? "STAYS LOCKED"
-                               : accessIsClosing ? "CLOSING..."
-                                                 : "OPENING...";
-            const char* access[] = {"", "ACCESS", accessGranted ? "GRANTED" : "DENIED", accessTag, action, ""};
+            const char* access[] = {"", "ACCESS", accessGranted ? "GRANTED" : "DENIED", accessTag, accessResult, ""};
             for (size_t line = 0; line < SCREEN_LINE_COUNT; line++) {
                 snprintf(screenLines[line], SCREEN_LINE_SIZE, "%s", access[line]);
             }
