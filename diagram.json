@@ -71,7 +71,8 @@
       "left": 483.44,
       "attrs": { "uid": "DE:AD:BE:EF" }
     },
-    { "type": "wokwi-relay-module", "id": "fanRelay", "top": 250, "left": -220, "attrs": {"transistor":"pnp"} }
+    { "type": "wokwi-relay-module", "id": "fanRelay", "top": 250, "left": -220, "attrs": {} },
+    { "type": "wokwi-text", "id": "fan-label", "top": 310, "left": -210, "attrs": { "text": "Fan (relay)" } }
   ],
   "connections": [
     [ "esp:TX0", "$serialMonitor:RX", "", [] ],
@@ -106,9 +107,9 @@
     [ "rfid:RST", "esp:D2", "green", [] ],
     [ "rfid:3.3V", "esp:3V3", "red", [] ],
     [ "rfid:GND", "esp:GND.1", "black", [] ],
-    ["fanRelay:VCC", "esp:VIN", "red", []],
-    ["fanRelay:GND", "esp:GND.2", "black", []],
-    ["fanRelay:IN", "esp:D26", "green", []]
+    [ "fanRelay:VCC", "esp:VIN", "red", [] ],
+    [ "fanRelay:GND", "esp:GND.2", "black", [] ],
+    [ "fanRelay:IN", "esp:D26", "green", [] ]
   ],
   "dependencies": {}
 }

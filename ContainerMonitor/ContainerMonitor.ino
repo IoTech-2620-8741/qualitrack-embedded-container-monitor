@@ -14,7 +14,7 @@
  * | MS07 | Luminosity of the container (BH1750), the moving average of its last 10 samples |
  * | MS08 | OLED with the data, the lock, the action and the link with the Edge |
  * | MS09 | RFID tag of the person who opens the container (RC522) |
- * | MS10 | Ventilation (fan at half speed) and simulated cooling (full speed) with the profile rules, with hysteresis |
+ * | MS10 | Ventilation and simulated cooling with the profile rules, with hysteresis: either one switches the fan on |
  * | MS11 | Lock opened for 10 seconds for an authorized tag |
  * | MS12 | Climate sent when a state changes and every 30 seconds; every tag read is sent |
  * | MS13 | Every action sent with its cause and its result |
@@ -23,16 +23,16 @@
  * | US71 | Status LED: green normal, yellow warning, red critical, solid red needs review, blue linking |
  * | US74 | The local alarm is acknowledged with an authorized tag |
  *
- * The sketch takes from the framework the `DigitalLightIntensitySensor`, `RfidSensor`, `ServoMotor`, `RgbLed`,
- * `Buzzer`, `RulesEngine`, `WiFiConnectivityDriver`, `TimeSynchronizationDriver` and `HttpGatewayClient`, and writes
- * what the framework asks an application to write: the telemetry packages of the Edge and the device that reacts to the
- * events. As in the SmartFactoryAlarm example of the framework, the device handles an event for each level of the fan
- * and the `RulesEngine` sends the commands of that event, to the fan and to the servo that shows its speed.
+ * The sketch takes from the framework the `DigitalLightIntensitySensor`, `RfidSensor`, `ServoMotor`, `RelayActuator`,
+ * `RgbLed`, `Buzzer`, `RulesEngine`, `WiFiConnectivityDriver`, `TimeSynchronizationDriver` and `HttpGatewayClient`,
+ * and writes what the framework asks an application to write: the telemetry packages of the Edge and the device that
+ * reacts to the events. As in the SmartFactoryAlarm example of the framework, the device handles an event for each
+ * action of the fan and the `RulesEngine` sends the command of that event to the fan, which the `RelayActuator`
+ * switches on or off. Wokwi has no fan, so a relay module on the same pin stands in for it there.
  * Two classes of the framework do not work and cannot be fixed by a subclass (see the README): the `DhtSensor` never
  * reads the DHT22 in Wokwi and the `OledDisplay` draws only the top 16 rows. So the sketch also writes
  * `ClimateSensor`, a `Sensor` of the framework for the DHT, and `OledScreen`, an `Actuator` of the framework for the
- * OLED. The `RelayActuator` of the framework only switches its pin fully on or off, so the sketch writes `PwmFan`, an
- * `Actuator` of the framework that also sets the speed of the fan, and nothing else.
+ * OLED, and nothing else.
  *
  * Requirements: ESP32 core 3.x or 4.x, and the libraries Modest-IoT-Nano-Framework 1.3.0 (Arduino Library Manager,
  * with MQTT) and ArduinoJson 7, which reads the configuration of the Edge. Copy secrets.example.h as secrets.h with the
@@ -46,8 +46,7 @@
  * | RC522 (SPI) MOSI / MISO / SCK / SDA / RST | GPIO 23 / 19 / 18 / 5 / 2 |
  * | DHT22 data | GPIO 15 |
  * | SG90 servo signal | GPIO 13 |
- * | 2N2222 base of the fan (1 kΩ), 1N4007 diode across the fan | GPIO 26 |
- * | SG90 servo signal of the fan gauge | GPIO 32 |
+ * | 2N2222 base of the fan (1 kΩ), 1N4007 diode across the fan; IN of the relay module in Wokwi | GPIO 26 |
  * | RGB LED red / green / blue (200 Ω each, common cathode) | GPIO 4 / 16 / 17 |
  * | Buzzer | GPIO 25 |
  */
@@ -79,10 +78,7 @@ static constexpr int CLIMATE_SENSOR_PIN = 15;
 static constexpr int TAG_READER_SELECT_PIN = 5;
 static constexpr int TAG_READER_RESET_PIN = 2;
 static constexpr int LOCK_SERVO_PIN = 13;
-
-/** @brief GPIO controlling the ventilation relay. */
-static constexpr int FAN_RELAY_PIN = 26;
-
+static constexpr int FAN_PIN = 26; // Not GPIO 12: it sets the flash voltage at boot.
 static constexpr int LED_RED_PIN = 4;
 static constexpr int LED_GREEN_PIN = 16;
 static constexpr int LED_BLUE_PIN = 17;
@@ -547,7 +543,7 @@ public:
                       DigitalLightIntensitySensor::DEFAULT_LIGHT_DETECTED_THRESHOLD_IN_LUX, this),
           tagReader(TAG_READER_SELECT_PIN, TAG_READER_RESET_PIN, this),
           lockServo(LOCK_SERVO_PIN, LOCK_CLOSED_ANGLE, this),
-          fan(FAN_RELAY_PIN, false, this),
+          fan(FAN_PIN, false, this), // Starts off.
           statusLed(LED_RED_PIN, LED_GREEN_PIN, LED_BLUE_PIN, false, this),
           alarmBuzzer(BUZZER_PIN, this),
           screen(SCREEN_I2C_ADDRESS, this),
@@ -562,7 +558,6 @@ public:
 
         if (!screen.initialize()) Serial.println("[ContainerMonitor] OLED not found at 0x3C");
         registerFanRules();
-        fan.handle(RelayActuator::RELAY_OFF_COMMAND);
         climateSensor.setFaultThreshold(SENSOR_FAULT_THRESHOLD);
         lightSensor.setFaultThreshold(SENSOR_FAULT_THRESHOLD);
         animateLed(millis());
@@ -694,7 +689,6 @@ private:
     // so these "angles" are the pulses of the latch: 5 gives about 0.55 ms (closed, about 4 degrees) and 13 about 1.44 ms
     // (open, about 89 degrees).
     static constexpr int LOCK_CLOSED_ANGLE = 5, LOCK_OPEN_ANGLE = 13;
-
     static constexpr unsigned long OPENING_DURATION = 10000;  // Lock open after an authorized tag.
     static constexpr unsigned long REVIEW_TIMEOUT = 300000;   // Without the Edge, the node needs review.
     static constexpr unsigned long RETRY_INTERVAL = 30000;
@@ -834,33 +828,27 @@ private:
             return;
         }
 
-        // Ventilation and simulated cooling share one physical relay.
+        // Ventilation and simulated cooling share the fan of the container: it runs while either one is on.
         const bool ventilationOn = actionOn[static_cast<int>(Action::Ventilation)];
         const bool coolingOn = actionOn[static_cast<int>(Action::Cooling)];
         const bool fanOn = ventilationOn || coolingOn;
-
-        const int fanEvent = coolingOn ? FAN_COOLING_EVENT : ventilationOn ? FAN_VENTILATION_EVENT : FAN_STOP_EVENT;
-
-        this -> on(Event(fanEvent));
-
-        const bool executed = digitalRead(FAN_RELAY_PIN) == (fanOn ? HIGH : LOW);
-
-        Serial.printf( "[ContainerMonitor] %s (%s %s), relay %s%s\n",
-        Names::of(action, on), Names::of(metric), Names::of(states[static_cast<int>(metric)]),
-        fanOn ? "ON" : "OFF", executed ? "" : " FAILED");
-
+        this->on(Event(coolingOn ? FAN_COOLING_EVENT : ventilationOn ? FAN_VENTILATION_EVENT : FAN_STOP_EVENT));
+        // The fan has no tachometer: the action is executed when the rules switched the fan to the wanted state.
+        const bool executed = fan.isActive() == fanOn;
+        Serial.printf("[ContainerMonitor] %s (%s %s), fan %s%s\n", Names::of(action, on), Names::of(metric),
+                      Names::of(states[static_cast<int>(metric)]), fanOn ? "on" : "off", executed ? "" : " FAILED");
         sendAction(action, on, true, metric, executed);
     }
 
     /**
-     * @brief One rule per event of the fan: its speed and the position of the gauge that shows it. The rules of the
-     * profile decide the event; these only send its commands.
+     * @brief One rule per event of the fan: ventilation and cooling switch it on, the stop switches it off. The rules
+     * of the profile decide the event; these only send its command.
      */
     void registerFanRules() {
         const bool registered = addFanRule(FAN_STOP_EVENT, RelayActuator::RELAY_OFF_COMMAND)
                                 && addFanRule(FAN_VENTILATION_EVENT, RelayActuator::RELAY_ON_COMMAND)
                                 && addFanRule(FAN_COOLING_EVENT, RelayActuator::RELAY_ON_COMMAND);
-        if (!registered) Serial.println("[ContainerMonitor] Fan relay rules could not be registered");
+        if (!registered) Serial.println("[ContainerMonitor] The rules of the fan could not be registered");
     }
 
     bool addFanRule(int eventIdentifier, const Command& command) {
