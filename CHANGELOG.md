@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- The fan is only switched on or off, with the `RelayActuator` of the framework on GPIO 26: ventilation and simulated
+  cooling both run it, and a fan action is `EXECUTED` when the fan took the wanted state (MS10). The fan of the
+  prototype keeps the 2N2222 and the 1N4007 diode.
+- In Wokwi, which has no fan, a relay module labeled "Fan (relay)" on GPIO 26 stands in for the fan, in place of the
+  fan gauge servo.
+
+### Removed
+
+- The speeds of the fan: half speed for ventilation, full speed for cooling and the start at full speed, with the
+  `PwmFan` of the sketch.
+- The fan gauge servo on GPIO 32.
+
 ## [1.1.0] - 2026-11-25
 
 The node reads the RFID tags in Wokwi, drives the fan with PWM and shows its speed on a gauge servo, and runs on the
