@@ -79,8 +79,10 @@ static constexpr int CLIMATE_SENSOR_PIN = 15;
 static constexpr int TAG_READER_SELECT_PIN = 5;
 static constexpr int TAG_READER_RESET_PIN = 2;
 static constexpr int LOCK_SERVO_PIN = 13;
-static constexpr int FAN_PIN = 26; // Not GPIO 12: it sets the flash voltage at boot.
-static constexpr int FAN_GAUGE_SERVO_PIN = 32;
+
+/** @brief GPIO controlling the ventilation relay. */
+static constexpr int FAN_RELAY_PIN = 26;
+
 static constexpr int LED_RED_PIN = 4;
 static constexpr int LED_GREEN_PIN = 16;
 static constexpr int LED_BLUE_PIN = 17;
@@ -533,77 +535,6 @@ private:
 };
 
 /**
- * @brief The 5 V fan of the container, switched by the 2N2222 with PWM.
- *
- * The `RelayActuator` of the framework only turns its pin fully on or off, so ventilation and cooling would run the fan
- * the same. This `Actuator` of the framework also sets its speed: `SET_SPEED_COMMAND` carries a percentage (0 stops
- * it), and like the `RelayActuator` it offers prebuilt commands, which the `RulesEngine` sends. A stopped fan starts at
- * full speed for half a second, since a small fan may not start at half speed; the device calls `update()` often to end
- * that start.
- */
-class PwmFan : public Actuator {
-public:
-    static constexpr int SET_SPEED_COMMAND_IDENTIFIER = 3100;
-    static constexpr uint8_t HALF_SPEED = 50;
-    static constexpr uint8_t FULL_SPEED = 100;
-
-    /** @brief Prebuilt command that stops the fan. */
-    static constexpr Command STOP_COMMAND{SET_SPEED_COMMAND_IDENTIFIER, 0};
-    /** @brief Prebuilt command that runs the fan at half speed (ventilation). */
-    static constexpr Command HALF_SPEED_COMMAND{SET_SPEED_COMMAND_IDENTIFIER, HALF_SPEED};
-    /** @brief Prebuilt command that runs the fan at full speed (simulated cooling). */
-    static constexpr Command FULL_SPEED_COMMAND{SET_SPEED_COMMAND_IDENTIFIER, FULL_SPEED};
-
-    explicit PwmFan(int signalGpioPin, CommandHandler* parentHandler = nullptr)
-        : Actuator(signalGpioPin, parentHandler) {}
-
-    /** @return False when no PWM channel could be attached to the pin; the fan then stays off. */
-    bool initialize() {
-        // The frequency and resolution of analogWrite(), so the fan shares the PWM timer of the status LED.
-        attached = ledcAttach(pin, PWM_FREQUENCY_IN_HERTZ, PWM_RESOLUTION_BITS);
-        applied = write(0);
-        return attached;
-    }
-
-    /** @return The speed last set, in percent. */
-    uint8_t getSpeedInPercentage() const { return speed; }
-
-    /** @return Whether the PWM output took the last speed; the fan has no tachometer to tell whether it turns. */
-    bool isApplied() const { return applied; }
-
-    /** @brief Ends the start at full speed once its time is over. */
-    void update(unsigned long now) {
-        if (!starting || now - startedAt < START_DURATION) return;
-        starting = false;
-        applied = write(speed);
-    }
-
-protected:
-    void executeCommand(Command command) override {
-        if (command.identifier != SET_SPEED_COMMAND_IDENTIFIER) return;
-        const uint8_t requested = static_cast<uint8_t>(constrain(command.payload, 0, FULL_SPEED));
-        if (speed == 0 && requested > 0) startedAt = millis();
-        starting = requested > 0 && requested < FULL_SPEED && (starting || speed == 0);
-        speed = requested;
-        applied = write(starting ? FULL_SPEED : speed);
-    }
-
-private:
-    static constexpr uint32_t PWM_FREQUENCY_IN_HERTZ = 1000;
-    static constexpr uint8_t PWM_RESOLUTION_BITS = 8;
-    static constexpr unsigned long START_DURATION = 500;
-
-    bool attached = false, applied = false, starting = false;
-    uint8_t speed = 0;
-    unsigned long startedAt = 0;
-
-    bool write(uint8_t percentage) const {
-        const uint32_t maximumDuty = (1UL << PWM_RESOLUTION_BITS) - 1;
-        return attached && ledcWrite(pin, maximumDuty * percentage / FULL_SPEED);
-    }
-};
-
-/**
  * @brief Container Monitor: reacts on the sampler task to its sensors and tags, and talks to the Edge on the network
  * task. The local reaction does not depend on the network: with no Edge, it keeps the default profile.
  */
@@ -616,8 +547,7 @@ public:
                       DigitalLightIntensitySensor::DEFAULT_LIGHT_DETECTED_THRESHOLD_IN_LUX, this),
           tagReader(TAG_READER_SELECT_PIN, TAG_READER_RESET_PIN, this),
           lockServo(LOCK_SERVO_PIN, LOCK_CLOSED_ANGLE, this),
-          fan(FAN_PIN, this),
-          fanGauge(FAN_GAUGE_SERVO_PIN, GAUGE_STOPPED_ANGLE, this),
+          fan(FAN_RELAY_PIN, false, this),
           statusLed(LED_RED_PIN, LED_GREEN_PIN, LED_BLUE_PIN, false, this),
           alarmBuzzer(BUZZER_PIN, this),
           screen(SCREEN_I2C_ADDRESS, this),
@@ -631,8 +561,8 @@ public:
         snprintf(configurationUrl, sizeof(configurationUrl), "%s%s%s", EDGE_BASE_URL, CONFIGURATION_ROUTE, DEVICE_ID);
 
         if (!screen.initialize()) Serial.println("[ContainerMonitor] OLED not found at 0x3C");
-        if (!fan.initialize()) Serial.printf("[ContainerMonitor] No PWM channel for the fan on GPIO %d\n", FAN_PIN);
         registerFanRules();
+        fan.handle(RelayActuator::RELAY_OFF_COMMAND);
         climateSensor.setFaultThreshold(SENSOR_FAULT_THRESHOLD);
         lightSensor.setFaultThreshold(SENSOR_FAULT_THRESHOLD);
         animateLed(millis());
@@ -764,8 +694,7 @@ private:
     // so these "angles" are the pulses of the latch: 5 gives about 0.55 ms (closed, about 4 degrees) and 13 about 1.44 ms
     // (open, about 89 degrees).
     static constexpr int LOCK_CLOSED_ANGLE = 5, LOCK_OPEN_ANGLE = 13;
-    // The servo of the fan gauge takes the same units: 5, 13 and 21 are equally spaced (about 4, 89 and 173 degrees).
-    static constexpr int GAUGE_STOPPED_ANGLE = 5, GAUGE_HALF_SPEED_ANGLE = 13, GAUGE_FULL_SPEED_ANGLE = 21;
+
     static constexpr unsigned long OPENING_DURATION = 10000;  // Lock open after an authorized tag.
     static constexpr unsigned long REVIEW_TIMEOUT = 300000;   // Without the Edge, the node needs review.
     static constexpr unsigned long RETRY_INTERVAL = 30000;
@@ -785,8 +714,7 @@ private:
     DigitalLightIntensitySensor lightSensor;
     RfidSensor tagReader;
     ServoMotor lockServo;
-    PwmFan fan;
-    ServoMotor fanGauge;
+    RelayActuator fan;
     RulesEngine fanRules;
     RgbLed statusLed;
     Buzzer alarmBuzzer;
@@ -905,14 +833,22 @@ private:
             updateLock(true, metric);
             return;
         }
-        // Ventilation and simulated cooling share the fan of the container; the rules of the fan set its speed.
-        this->on(Event(actionOn[static_cast<int>(Action::Cooling)]       ? FAN_COOLING_EVENT
-                       : actionOn[static_cast<int>(Action::Ventilation)] ? FAN_VENTILATION_EVENT
-                                                                         : FAN_STOP_EVENT));
-        const bool executed = fan.isApplied();
-        Serial.printf("[ContainerMonitor] %s (%s %s), fan at %d%%%s\n", Names::of(action, on), Names::of(metric),
-                      Names::of(states[static_cast<int>(metric)]), static_cast<int>(fan.getSpeedInPercentage()),
-                      executed ? "" : " FAILED");
+
+        // Ventilation and simulated cooling share one physical relay.
+        const bool ventilationOn = actionOn[static_cast<int>(Action::Ventilation)];
+        const bool coolingOn = actionOn[static_cast<int>(Action::Cooling)];
+        const bool fanOn = ventilationOn || coolingOn;
+
+        const int fanEvent = coolingOn ? FAN_COOLING_EVENT : ventilationOn ? FAN_VENTILATION_EVENT : FAN_STOP_EVENT;
+
+        this -> on(Event(fanEvent));
+
+        const bool executed = digitalRead(FAN_RELAY_PIN) == (fanOn ? HIGH : LOW);
+
+        Serial.printf( "[ContainerMonitor] %s (%s %s), relay %s%s\n",
+        Names::of(action, on), Names::of(metric), Names::of(states[static_cast<int>(metric)]),
+        fanOn ? "ON" : "OFF", executed ? "" : " FAILED");
+
         sendAction(action, on, true, metric, executed);
     }
 
@@ -921,16 +857,14 @@ private:
      * profile decide the event; these only send its commands.
      */
     void registerFanRules() {
-        const bool registered = addFanRule(FAN_STOP_EVENT, PwmFan::STOP_COMMAND, GAUGE_STOPPED_ANGLE)
-                                && addFanRule(FAN_VENTILATION_EVENT, PwmFan::HALF_SPEED_COMMAND, GAUGE_HALF_SPEED_ANGLE)
-                                && addFanRule(FAN_COOLING_EVENT, PwmFan::FULL_SPEED_COMMAND, GAUGE_FULL_SPEED_ANGLE);
-        if (!registered) Serial.println("[ContainerMonitor] The rules of the fan could not be registered");
+        const bool registered = addFanRule(FAN_STOP_EVENT, RelayActuator::RELAY_OFF_COMMAND)
+                                && addFanRule(FAN_VENTILATION_EVENT, RelayActuator::RELAY_ON_COMMAND)
+                                && addFanRule(FAN_COOLING_EVENT, RelayActuator::RELAY_ON_COMMAND);
+        if (!registered) Serial.println("[ContainerMonitor] Fan relay rules could not be registered");
     }
 
-    bool addFanRule(int eventIdentifier, const Command& speed, int gaugeAngle) {
-        return fanRules.addRule(eventIdentifier, &fan, speed.identifier, speed.payload)
-               && fanRules.addActionToRule(eventIdentifier, &fanGauge, ServoMotor::DRIVE_TO_ANGLE_COMMAND_IDENTIFIER,
-                                           gaugeAngle);
+    bool addFanRule(int eventIdentifier, const Command& command) {
+        return fanRules.addRule(eventIdentifier, &fan, command.identifier, command.payload);
     }
 
     void updateLock(bool causedByRule, Metric metric) {
@@ -949,7 +883,6 @@ private:
         // Read after the tags: a tag read above stores a later millis(), and the unsigned difference with an earlier
         // one would end the opening at once.
         const unsigned long now = millis();
-        fan.update(now);
         if (openedByTag && now - openedByTagAt >= OPENING_DURATION) {
             openedByTag = false;
             Serial.println("[ContainerMonitor] Opening time over");
