@@ -43,7 +43,7 @@ The RGB LED on the top frame shows the status of the node; the OLED repeats it a
 | Warning | Yellow | Slow blink | A metric outside the normal range; the rules of WARNING act (ventilation) |
 | Critical alert | Red | Fast blink | A metric outside the critical range; the rules act and the buzzer sounds |
 | Needs review | Red | Solid | No answer of the Edge for 5 minutes, or a sensor fault: check the network or the power |
-| Access granted | Green | Solid for 2 s | Authorized tag: the servo opens the container |
+| Access granted | Green | Solid for 2 s | Authorized tag: the servo opens or closes the container |
 | Access denied | Red | 3 flashes | Unknown tag: the servo stays closed and the buzzer sounds |
 | Linking with the Edge | Blue | Soft pulse | The Edge has not accepted the node yet |
 
@@ -55,9 +55,9 @@ A critical alert has priority over the review signal, and the review signal over
 |-------|--------|
 | Temperature in WARNING | Ventilation: the fan on (`VENTILATION_ON`) |
 | Temperature in CRITICAL | Ventilation and cooling, the fan on (`COOLING_ON`); the buzzer every 2 s |
-| Authorized RFID tag | The servo opens the container (`SERVO_OPEN`) for 10 seconds |
-| Unknown RFID tag | Buzzer and red LED; the container stays closed |
-| End of the opening time | The servo closes the container (`SERVO_CLOSE`) |
+| Authorized RFID tag | The servo opens the container (`SERVO_OPEN`) |
+| Unknown RFID tag | Buzzer and red LED; the lock stays as it was |
+| The tag that opened it again, or 2 minutes without it | The servo closes the container (`SERVO_CLOSE`) |
 | The reading is NORMAL again | The action stops (`VENTILATION_OFF`, `COOLING_OFF`) |
 
 The rules come from the profile: each one names a metric, a state and an action, and it keeps acting while the metric is
@@ -69,15 +69,20 @@ no fan, so a relay module on GPIO 26 stands in for it there. The node reports ev
 action is `EXECUTED` when the fan was switched to the wanted state: the fan has no tachometer, so the node cannot tell
 whether it turns.
 
+The tag that opened the lock closes it when it is presented again, with a low tone. Another authorized tag keeps the
+lock open and restarts the opening time but does not close it, and a lock that nobody closes closes by itself 2 minutes
+after the last authorized tag, so a container is not left open (MS11).
+
 An authorized tag presented while the container is CRITICAL also acknowledges the local alarm and silences the buzzer
 until the container leaves CRITICAL (US74). The screen shows `ALARM ACK` meanwhile.
 
 ### Screen
 
-The 0.96" OLED shows, in this order, the identifier of the container and its overall state; the temperature,
-humidity and luminosity, each with its state (`FAULT` for a sensor fault); the active action (`AUTO` when no rule
-acts) and the lock (`LOCKED` or `OPEN`); and the link with the Edge (`ONLINE`, `LINKING` or `OFFLINE`). When a
-tag is presented, it shows `ACCESS GRANTED` or `ACCESS DENIED` with the UID for 3 seconds.
+The 0.96" OLED shows, in this order, the identifier of the container and its overall state; the temperature, humidity
+and luminosity, each with its state (`FAULT` for a sensor fault); the active action (`AUTO` when no rule acts) and the
+lock (`LOCKED` or `OPEN`); and the link with the Edge (`ONLINE`, `LINKING` or `OFFLINE`). When a tag is presented, it
+shows `ACCESS GRANTED` or `ACCESS DENIED` with the UID and what the lock does (`OPENING...`, `CLOSING...`, `STAYS OPEN`
+or `STAYS LOCKED`) for 3 seconds.
 
 ## Hardware
 
@@ -238,9 +243,10 @@ What to expect (checked in Wokwi with the ESP32 core of the simulator):
   `VENT+COOL` and the buzzer sounds every two seconds. Back at 24.8 °C the container stays in WARNING (hysteresis); at
   24 °C it is NORMAL and the relay switches off. Wokwi has no fan, so the relay module stands in for it.
 - Click the MFRC522 reader, choose a card and press `TAP`. The Blue Card has the authorized UID `DE:AD:BE:EF` (set in
-  `diagram.json`): green LED for 2 s, `ACCESS GRANTED`, the servo opens for 10 seconds, and in CRITICAL the alarm is
-  acknowledged. The other cards keep the UIDs of Wokwi and are denied (3 red flashes, `ACCESS DENIED`). UIDs can
-  also be typed in the serial monitor, one per line.
+  `diagram.json`): green LED for 2 s, `ACCESS GRANTED` and `OPENING...`, the servo opens, and in CRITICAL the alarm is
+  acknowledged. Tap it again to close the servo (`CLOSING...`); left open, the servo closes by itself 2 minutes later.
+  The other cards keep the UIDs of Wokwi and are denied (3 red flashes, `ACCESS DENIED`). UIDs can also be typed in the
+  serial monitor, one per line.
 - Move the slider of the BH1750 to 300 lux: the luminosity reaches WARNING about 5 seconds later, when the average of
   its last 10 samples passes 200 lux.
 - The simulator reaches the internet through `Wokwi-GUEST` but not a local network, so the requests to the Edge fail
