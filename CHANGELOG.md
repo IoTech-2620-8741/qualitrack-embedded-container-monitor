@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.2.0] - 2026-11-27
+
+The node switches the fan on and off with the `RelayActuator` of the framework, and the lock opened by a tag stays open
+until the same tag closes it or 2 minutes pass after the last authorized tag. The readings, the actions, the sign-in
+and the profile read from the Edge API keep their fields and types, so the major version does not change.
+
 ### Changed
 
 - The lock opened by a tag stays open until the same tag is presented again, or closes by itself 2 minutes after the
