@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.2.0] - 2026-11-27
+
+The node switches the fan on and off with the `RelayActuator` of the framework, and the lock opened by a tag stays open
+until the same tag closes it or 2 minutes pass after the last authorized tag. The readings, the actions, the sign-in
+and the profile read from the Edge API keep their fields and types, so the major version does not change.
+
+### Changed
+
+- The lock opened by a tag stays open until the same tag is presented again, or closes by itself 2 minutes after the
+  last authorized tag, in place of the 10-second opening (MS11, #14). Another authorized tag keeps the lock open but
+  does not close it.
+- The screen of a tag tells what the lock does (`OPENING...`, `CLOSING...`, `STAYS OPEN` or `STAYS LOCKED`), and a
+  closing by a tag has its own low tone (#14).
+- The fan is only switched on or off, with the `RelayActuator` of the framework on GPIO 26: ventilation and simulated
+  cooling both run it, and a fan action is `EXECUTED` when the fan took the wanted state (MS10, #13). The fan of
+  the prototype keeps the 2N2222 and the 1N4007 diode.
+- In Wokwi, which has no fan, a relay module labeled "Fan (relay)" on GPIO 26 stands in for the fan, in place of the
+  fan gauge servo (#13).
+
+### Removed
+
+- The speeds of the fan: half speed for ventilation, full speed for cooling and the start at full speed, with the
+  `PwmFan` of the sketch (#13).
+- The fan gauge servo on GPIO 32 (#13).
+
 ## [1.1.0] - 2026-11-25
 
 The node reads the RFID tags in Wokwi, drives the fan with PWM and shows its speed on a gauge servo, and runs on the
