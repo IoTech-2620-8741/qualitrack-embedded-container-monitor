@@ -729,7 +729,9 @@ private:
     Metric actionCause[ACTION_COUNT] = {Metric::Temperature, Metric::Temperature, Metric::Temperature};
     bool lockOpen = false, openedByTag = false, alarmAcknowledged = false;
     unsigned long openedByTagAt = 0;
+    char openedByTagUid[SCREEN_LINE_SIZE]{};      
     bool accessFeedback = false, accessOnScreen = false, accessGranted = false;
+    bool accessIsClosing = false;                 // true if the feedback is a closure on the same card
     unsigned long accessFeedbackAt = 0;
     char accessTag[SCREEN_LINE_SIZE]{};
     bool ledDrawn = false, ledLit = false;
@@ -868,15 +870,7 @@ private:
 
     void animate() {
         if (SERIAL_TAG_INPUT) readSerialTag();
-        // Read after the tags: a tag read above stores a later millis(), and the unsigned difference with an earlier
-        // one would end the opening at once.
-        const unsigned long now = millis();
-        if (openedByTag && now - openedByTagAt >= OPENING_DURATION) {
-            openedByTag = false;
-            Serial.println("[ContainerMonitor] Opening time over");
-            updateLock(false, Metric::Temperature);
-        }
-        animateLed(now);
+        animateLed(millis());
     }
 
     void onTag(const char* tag) {
@@ -892,9 +886,18 @@ private:
 
         accessFeedback = accessOnScreen = true;
         accessGranted = granted;
+        accessIsClosing = granted && openedByTag && strcasecmp(openedByTagUid, tag) == 0;
         snprintf(accessTag, sizeof(accessTag), "%s", tag);
         accessFeedbackAt = now;
-        if (granted) {
+
+        if (granted && accessIsClosing) {
+            // The same card goes through again: lock the padlock now.
+            openedByTag = false;
+            openedByTagUid[0] = '\0';
+            Serial.printf("[ContainerMonitor] Same tag %s: closing the lock\n", tag);
+            playTone(600, 150);
+            updateLock(false, Metric::Temperature);
+        } else if (granted) {
             if (overall == State::Critical && !alarmAcknowledged) {
                 alarmAcknowledged = true; // US74: the staff acknowledges the local alarm.
                 Serial.printf("[ContainerMonitor] Alarm acknowledged by %s\n", tag);
@@ -902,6 +905,7 @@ private:
             playTone(2500, 120);
             openedByTag = true;
             openedByTagAt = now; // A new tag while open restarts the opening time.
+            snprintf(openedByTagUid, sizeof(openedByTagUid), "%s", tag);
             updateLock(false, Metric::Temperature);
         } else {
             playTone(400, 800);
@@ -969,8 +973,10 @@ private:
     void refreshScreen(unsigned long now) {
         if (accessOnScreen && now - accessFeedbackAt >= ACCESS_MESSAGE_DURATION) accessOnScreen = false;
         if (accessOnScreen) {
-            const char* access[] = {"", "ACCESS", accessGranted ? "GRANTED" : "DENIED", accessTag,
-                                    accessGranted ? "OPENING..." : "STAYS LOCKED", ""};
+            const char* action = !accessGranted ? "STAYS LOCKED"
+                               : accessIsClosing ? "CLOSING..."
+                                                 : "OPENING...";
+            const char* access[] = {"", "ACCESS", accessGranted ? "GRANTED" : "DENIED", accessTag, action, ""};
             for (size_t line = 0; line < SCREEN_LINE_COUNT; line++) {
                 snprintf(screenLines[line], SCREEN_LINE_SIZE, "%s", access[line]);
             }
