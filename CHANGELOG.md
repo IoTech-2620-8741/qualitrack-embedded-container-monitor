@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- The lock opened by a tag stays open until the same tag is presented again, or closes by itself 2 minutes after the
+  last authorized tag, in place of the 10-second opening (MS11, #14). Another authorized tag keeps the lock open but
+  does not close it.
+- The screen of a tag tells what the lock does (`OPENING...`, `CLOSING...`, `STAYS OPEN` or `STAYS LOCKED`), and a
+  closing by a tag has its own low tone (#14).
 - The fan is only switched on or off, with the `RelayActuator` of the framework on GPIO 26: ventilation and simulated
   cooling both run it, and a fan action is `EXECUTED` when the fan took the wanted state (MS10, #13). The fan of
   the prototype keeps the 2N2222 and the 1N4007 diode.
