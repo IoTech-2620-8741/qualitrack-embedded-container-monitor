@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.2.1] - 2026-11-28
+
+A fix of the license only: the firmware, the simulation and the Edge API are the same as in 1.2.0.
+
+### Fixed
+
+- `LICENSE.md` names the Container Monitor as its software product: it named the Environment Monitor, the repository
+  it was copied from (#17).
+
 ## [1.2.0] - 2026-11-27
 
 The node switches the fan on and off with the `RelayActuator` of the framework, and the lock opened by a tag stays open
