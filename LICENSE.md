@@ -52,7 +52,7 @@ No additional rights are granted by access to the Software, its source code repo
 
 ---
 
-**Software Product:** QualiTrack Embedded Environment Monitor  
+**Software Product:** QualiTrack Embedded Container Monitor  
 **Developer and Licensor:** IoTech  
 **License Type:** Proprietary Software License  
 **Copyright:** © 2026 IoTech. All rights reserved.
